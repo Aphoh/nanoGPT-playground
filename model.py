@@ -32,7 +32,11 @@ class BlockLinear(nn.Module):
     Linear layer that takes input data as a sequence of 16x16 matrices and 
     transforms it into another sequence of 16x16 matrices
     """
-    def __init__(self, in_features, out_features, bias=True):
+    in_features: int
+    out_features: int
+    weight: torch.Tensor
+
+    def __init__(self, in_features: int, out_features: int, bias=True, device=None, dtype=None):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
@@ -41,17 +45,18 @@ class BlockLinear(nn.Module):
 
         self.K = in_features // 256
         self.L = out_features // 256
-        self.weight = nn.Parameter(torch.empty(self.L, self.K, 16, 16))
+        self.weight = nn.Parameter(torch.empty(self.L, self.K, 16, 16, device=device, dtype=dtype))
 
-        self.bias = None
         if bias:
-            self.bias = nn.Parameter(torch.empty(self.L, 16, 16))
+            self.bias= nn.Parameter(torch.empty(self.L, 16, 16, device=device, dtype=dtype))
+        else:
+            self.register_parameter('bias', None)
 
         self.reset_parameters()
 
     def reset_parameters(self):
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        if self.bias:
+        if self.bias is not None:
             #fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
             #bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
             #nn.init.uniform_(self.bias, -bound, bound)
@@ -84,15 +89,19 @@ class CausalSelfAttention(nn.Module):
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.dao_flash = False
         self.flash = False
-        try:
-            import flash_attn 
-            self.flash = flash_attn.flash_attn_qkvpacked_func
-            self.dao_flash = True
-        except Exception:
-            print("Unable to load flash-attn.")
+        if torch.cuda.get_device_capability()[0] >= 8:
+            try:
+                import flash_attn 
+                self.flash = flash_attn.flash_attn_qkvpacked_func
+                print("Using dao flash attention")
+                self.dao_flash = True
+            except Exception:
+                print("Unable to load flash-attn.")
+        else:
+            print("Device does not support DAO flash-attn")
 
-        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-        if not self.flash and not self.dao_flash:
+        self.torch_flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+        if not self.torch_flash and not self.dao_flash:
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
@@ -114,7 +123,7 @@ class CausalSelfAttention(nn.Module):
             v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
             # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-            if self.flash:
+            if self.torch_flash:
                 # efficient attention using Flash Attention CUDA kernels
                 y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
             else:
