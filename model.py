@@ -15,6 +15,18 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+@dataclass
+class GPTConfig:
+    block_size: int = 1024
+    vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
+    n_layer: int = 12
+    n_head: int = 12
+    n_embd: int = 768
+    dropout: float = 0.0
+    bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    block_linear: bool = False # False: use Linear layers, like GPT-2. False: use BlockLinear layer
+    mlp_ratio: bool = 4 # ratio of mlp middle hidden dimension to embedding dimension
+
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
 
@@ -43,12 +55,12 @@ class BlockLinear(nn.Module):
         assert in_features % 256 == 0 and out_features % 256 == 0, "in_features and out_features must be multiples of 256"
         assert in_features >= 256 and out_features >= 256, "in_features and out_features must be at least 256"
 
-        self.K = in_features // 256
+        self.K = in_features // 128
         self.L = out_features // 256
-        self.weight = nn.Parameter(torch.empty(self.L, self.K, 16, 16, device=device, dtype=dtype))
+        self.weight = nn.Parameter(torch.empty(self.L, self.K, 16, 32, device=device, dtype=dtype))
 
         if bias:
-            self.bias= nn.Parameter(torch.empty(self.L, 16, 16, device=device, dtype=dtype))
+            self.bias = nn.Parameter(torch.empty(self.L, 16, 32, device=device, dtype=dtype))
         else:
             self.register_parameter('bias', None)
 
@@ -64,9 +76,9 @@ class BlockLinear(nn.Module):
 
     def forward(self, input):
         # input is (B, T, in_features)
-        input = input.view(input.size(0), input.size(1), self.K, 16, 16)
+        input = input.view(input.size(0), input.size(1), self.K, 8, 16)
         res = torch.einsum('btkij,lkjm->btlim', [input, self.weight])
-        if self.bias:
+        if self.bias is not None:
             res += self.bias
         return res.reshape(res.size(0), res.size(1), self.out_features).contiguous()
 
@@ -89,7 +101,7 @@ class CausalSelfAttention(nn.Module):
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
         self.dao_flash = False
         self.flash = False
-        if torch.cuda.get_device_capability()[0] >= 8:
+        if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
             try:
                 import flash_attn 
                 self.flash = flash_attn.flash_attn_qkvpacked_func
@@ -141,12 +153,12 @@ class CausalSelfAttention(nn.Module):
 
 class MLP(nn.Module):
 
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
         LinCls = BlockLinear if config.block_linear else nn.Linear
-        self.c_fc    = LinCls(config.n_embd, config.n_embd, bias=config.bias)
+        self.c_fc    = LinCls(config.n_embd, config.mlp_ratio * config.n_embd, bias=config.bias)
         self.gelu    = nn.GELU()
-        self.c_proj  = LinCls(config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj  = LinCls(config.mlp_ratio * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
@@ -170,16 +182,6 @@ class Block(nn.Module):
         x = x + self.mlp(self.ln_2(x))
         return x
 
-@dataclass
-class GPTConfig:
-    block_size: int = 1024
-    vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
-    n_layer: int = 12
-    n_head: int = 12
-    n_embd: int = 768
-    dropout: float = 0.0
-    bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-    block_linear: bool = False # False: use Linear layers, like GPT-2. False: use BlockLinear layer
 
 class GPT(nn.Module):
 

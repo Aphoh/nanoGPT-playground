@@ -49,6 +49,7 @@ gradient_accumulation_steps = 5 * 8 # used to simulate larger batch sizes
 batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 1024
 block_linear = False
+mlp_ratio = 4
 # model
 n_layer = 12
 n_head = 12
@@ -243,6 +244,7 @@ def get_lr(it):
 if wandb_log and master_process:
     import wandb
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+    wandb.watch(model.module if ddp else model, log='all', log_freq=eval_interval)
 
 # training loop
 X, Y = get_batch('train') # fetch the very first batch
@@ -281,7 +283,11 @@ while True:
                     'config': config,
                 }
                 print(f"saving checkpoint to {out_dir}")
-                torch.save(checkpoint, os.path.join(out_dir, 'ckpt.pt'))
+                ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+                torch.save(checkpoint, ckpt_path)
+                if wandb_log and iter_num == eval_interval: # if this is the first eval, watch the checkpoint file
+                    print("watching checkpoint file for changes")
+                    wandb.save(ckpt_path, policy="live")
     if iter_num == 0 and eval_only:
         break
 
