@@ -42,7 +42,6 @@ init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
 # wandb logging
 wandb_log = False # disabled by default
 wandb_project = 'owt'
-wandb_run_name = 'gpt2' # 'run' + str(time.time())
 # data
 dataset = 'openwebtext'
 gradient_accumulation_steps = 5 * 8 # used to simulate larger batch sizes
@@ -50,6 +49,7 @@ batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch si
 block_size = 1024
 block_linear = False
 mlp_ratio = 4
+mlp_init_std = 0.02
 # model
 n_layer = 12
 n_head = 12
@@ -243,7 +243,7 @@ def get_lr(it):
 # logging
 if wandb_log and master_process:
     import wandb
-    wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+    wandb.init(project=wandb_project, config=config)
     wandb.watch(model.module if ddp else model, log='all', log_freq=eval_interval)
 
 # training loop

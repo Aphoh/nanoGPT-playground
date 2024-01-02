@@ -26,6 +26,7 @@ class GPTConfig:
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
     block_linear: bool = False # False: use Linear layers, like GPT-2. False: use BlockLinear layer
     mlp_ratio: bool = 4 # ratio of mlp middle hidden dimension to embedding dimension
+    mlp_init_std: float = 0.02 # std dev of gaussian initialization for mlp weights
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
@@ -233,7 +234,7 @@ class GPT(nn.Module):
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
         if isinstance(module, BlockLinear): # TODO: figure out how to init these
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            torch.nn.init.normal_(module.weight, mean=0.0, std=self.config.mlp_init_std)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
@@ -365,7 +366,14 @@ class GPT(nn.Module):
         N = self.get_num_params()
         cfg = self.config
         L, H, Q, T = cfg.n_layer, cfg.n_head, cfg.n_embd//cfg.n_head, cfg.block_size
-        flops_per_token = 6*N + 12*L*H*Q*T
+        if cfg.block_linear:
+            mats = N // (16*32) # number of 16x32 matrices
+            flops_per_mat = 2*8*16*32 # 2x 8x16x32 matrix multiplies
+            mats_per_token = cfg.n_embd // (8*16)
+            flops_per_token = mats * mats_per_token * flops_per_mat
+        else:
+            flops_per_token = 6*N
+        flops_per_token += 12*L*H*Q*Q
         flops_per_fwdbwd = flops_per_token * T
         flops_per_iter = flops_per_fwdbwd * fwdbwd_per_iter
         # express our flops throughput as ratio of A100 bfloat16 peak flops
