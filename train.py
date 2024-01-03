@@ -244,7 +244,9 @@ def get_lr(it):
 if wandb_log and master_process:
     import wandb
     wandb.init(project=wandb_project, config=config)
-    wandb.watch(model.module if ddp else model, log='all', log_freq=eval_interval)
+    inner_model = model.module if ddp else model
+    wandb.watch(inner_model, log='all', log_freq=eval_interval)
+    wandb.log({'flops_per_token': inner_model.estimate_flops_per_token()})
 
 # training loop
 X, Y = get_batch('train') # fetch the very first batch
