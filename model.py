@@ -366,13 +366,7 @@ class GPT(nn.Module):
         N = self.get_num_params()
         cfg = self.config
         L, H, Q, T = cfg.n_layer, cfg.n_head, cfg.n_embd//cfg.n_head, cfg.block_size
-        if cfg.block_linear:
-            mats = N // (16*32) # number of 16x32 matrices
-            flops_per_mat = 2*8*16*32 # 2x 8x16x32 matrix multiplies
-            mats_per_token = cfg.n_embd // (8*16)
-            flops_per_token = mats * mats_per_token * flops_per_mat
-        else:
-            flops_per_token = 6*N
+        flops_per_token = 48*N if cfg.block_linear else 6*N
         flops_per_token += 12*L*H*Q*Q
         flops_per_fwdbwd = flops_per_token * T
         flops_per_iter = flops_per_fwdbwd * fwdbwd_per_iter
