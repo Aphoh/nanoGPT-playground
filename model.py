@@ -25,6 +25,9 @@ class GPTConfig:
     dropout: float = 0.0
     bias: bool = True # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
     block_linear: bool = False # False: use Linear layers, like GPT-2. False: use BlockLinear layer
+    block_m: int = 8 # m dimension for block linear layer
+    block_k: int = 16 # k dimension for block linear layer
+    block_n: int = 32 # n dimension for block linear layer
     mlp_ratio: bool = 4 # ratio of mlp middle hidden dimension to embedding dimension
     mlp_init_std: float = 0.02 # std dev of gaussian initialization for mlp weights
 
@@ -39,7 +42,13 @@ class LayerNorm(nn.Module):
     def forward(self, input):
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
     
-
+def block_linear_flops_per_token(m, k, n, in_features, out_features):
+    in_mats = in_features // (m*k)
+    out_mats = out_features // (m*n)
+    per_in_mat = 2 * m * n * k
+    per_out_mat = per_in_mat * in_mats * out_mats
+    post_add = per_out_mat + m * n * out_mats
+    return post_add
 class BlockLinear(nn.Module):
     """
     Linear layer that takes input data as a sequence of 16x16 matrices and 
@@ -49,23 +58,30 @@ class BlockLinear(nn.Module):
     out_features: int
     weight: torch.Tensor
 
-    def __init__(self, in_features: int, out_features: int, bias=True, device=None, dtype=None):
+    def __init__(self, in_features: int, out_features: int, m: int = 8, k: int = 16, n: int = 32, bias=True, device=None, dtype=None):
         super().__init__()
+        assert in_features % m*k == 0 and out_features % n*m == 0, "in_features and out_features must be multiples of m*k and n*m"
         self.in_features = in_features
         self.out_features = out_features
-        assert in_features % 256 == 0 and out_features % 256 == 0, "in_features and out_features must be multiples of 256"
-        assert in_features >= 256 and out_features >= 256, "in_features and out_features must be at least 256"
-
-        self.K = in_features // 128
-        self.L = out_features // 256
-        self.weight = nn.Parameter(torch.empty(self.L, self.K, 16, 32, device=device, dtype=dtype))
+        self.m = m
+        self.n = n
+        self.k = k
+        self.in_mats = in_features // (m*k)
+        self.out_mats = out_features // (m*n)
+        self.weight = nn.Parameter(torch.empty(self.out_mats, self.in_mats, n, k, device=device, dtype=dtype))
 
         if bias:
-            self.bias = nn.Parameter(torch.empty(self.L, 16, 32, device=device, dtype=dtype))
+            self.bias = nn.Parameter(torch.empty(self.out_mats, m, n, device=device, dtype=dtype))
         else:
             self.register_parameter('bias', None)
 
         self.reset_parameters()
+
+    def weight_per_input_ratio(self):
+        return self.weight.numel() / self.in_features
+    
+    def flops_per_token(self):
+        return block_linear_flops_per_token(self.m, self.k, self.n, self.in_features, self.out_features)
 
     def reset_parameters(self):
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
@@ -77,11 +93,21 @@ class BlockLinear(nn.Module):
 
     def forward(self, input):
         # input is (B, T, in_features)
-        input = input.view(input.size(0), input.size(1), self.K, 8, 16)
-        res = torch.einsum('btkij,lkjm->btlim', [input, self.weight])
+        input = input.view(input.size(0), input.size(1), self.in_mats, self.m, self.k)
+        res = torch.einsum('btkij,lkmj->btlim', [input, self.weight])
         if self.bias is not None:
             res += self.bias
-        return res.reshape(res.size(0), res.size(1), self.out_features).contiguous()
+        return res.contiguous().view(res.size(0), res.size(1), self.out_features)
+    
+def test_block_linear():
+    with torch.no_grad():
+        layer = BlockLinear(128, 256, 4, 16, 8)
+        x = torch.randn(1, 2, 128)
+        y = layer(x)[0,0]
+        x = x.view(1, 2, 2, 4, 16)[0,0] # just look at batch id 0, seq id 0
+        val_y_batch = torch.matmul(x, layer.weight.transpose(-1, -2))
+        val_y_summed = val_y_batch.sum(dim=1) # [out_mat, in_mat, m, n], sum over in_mats dimension
+        assert val_y_summed.view(-1).allclose(y.view(-1), atol=1e-5), "BlockLinear forward pass failed"
 
 class CausalSelfAttention(nn.Module):
 
@@ -376,10 +402,18 @@ class GPT(nn.Module):
         """
         estimate the flops per token for a forward + backward pass through the model
         """
-        N = self.get_num_params()
         cfg = self.config
+        flops_per_token = cfg.n_embd # embedding backprop
+        if cfg.block_linear:
+            flops_per_token_mlp_1 = block_linear_flops_per_token(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, cfg.mlp_ratio * cfg.n_embd)
+            flops_per_token_mlp_2 = block_linear_flops_per_token(cfg.block_m, cfg.block_k, cfg.block_n, cfg.mlp_ratio * cfg.n_embd, cfg.n_embd)
+            flops_per_token_attn_head_proj = block_linear_flops_per_token(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, 3 * cfg.n_embd)
+            flops_per_token_attn_outp_proj = block_linear_flops_per_token(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, cfg.n_embd)
+            # 1 for fwd, 2 for bwd
+            flops_per_token += 3 * cfg.n_layer * (flops_per_token_mlp_1 + flops_per_token_mlp_2 + flops_per_token_attn_head_proj + flops_per_token_attn_outp_proj)
+        else:
+            flops_per_token = 6*self.get_num_params() # 2 for fwd, 4 for bwd
         L, H, Q, = cfg.n_layer, cfg.n_head, cfg.n_embd//cfg.n_head
-        flops_per_token = 48*N if cfg.block_linear else 6*N
         flops_per_token += 12*L*H*Q*Q
         return flops_per_token
 
