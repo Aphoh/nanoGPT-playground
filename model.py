@@ -28,7 +28,7 @@ class GPTConfig:
     block_m: int = 8 # m dimension for block linear layer
     block_k: int = 16 # k dimension for block linear layer
     block_n: int = 32 # n dimension for block linear layer
-    mlp_ratio: bool = 4 # ratio of mlp middle hidden dimension to embedding dimension
+    mlp_ratio: int = 4 # ratio of mlp middle hidden dimension to embedding dimension
     mlp_init_std: float = 0.02 # std dev of gaussian initialization for mlp weights
 
 class LayerNorm(nn.Module):
@@ -59,7 +59,7 @@ def block_linear_stats(m: int, k: int, n: int, in_features: int, out_features: i
     out_mats = out_features // (m*n)
     per_in_mat = 2 * m * n * k
     per_out_mat = per_in_mat * in_mats * out_mats
-    flops_per_token = per_out_mat + m * n * out_mats
+    flops_per_token = per_out_mat + m * n * in_mats # multiplication flops + adding flops
     n_weights = in_mats * out_mats * n * k
     flops_per_token_per_weight = flops_per_token / n_weights
     return {'flops_per_token': flops_per_token, 'flops_per_token_per_weight': flops_per_token_per_weight, 'n_weights': n_weights}
@@ -198,9 +198,12 @@ class MLP(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
         LinCls = BlockLinear if config.block_linear else nn.Linear
-        self.c_fc    = LinCls(config.n_embd, config.mlp_ratio * config.n_embd, bias=config.bias)
+        # here we adjust the middle size for block linear to maintain the same number of weights
+        # and get purely more flops/token from block_m
+        middle_size = config.n_embd * config.mlp_ratio * (config.block_m**2 if config.block_linear else 1)
+        self.c_fc    = LinCls(config.n_embd, middle_size, bias=config.bias)
         self.gelu    = nn.GELU()
-        self.c_proj  = LinCls(config.mlp_ratio * config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj  = LinCls(middle_size, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
@@ -420,12 +423,9 @@ class GPT(nn.Module):
         cfg = self.config
         flops_per_token = cfg.n_embd # embedding backprop
         if cfg.block_linear:
-            flops_per_token_mlp_1 = block_linear_stats(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, cfg.mlp_ratio * cfg.n_embd)["flops_per_token"]
-            flops_per_token_mlp_2 = block_linear_stats(cfg.block_m, cfg.block_k, cfg.block_n, cfg.mlp_ratio * cfg.n_embd, cfg.n_embd)["flops_per_token"]
-            flops_per_token_attn_head_proj = block_linear_stats(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, 3 * cfg.n_embd)["flops_per_token"]
-            flops_per_token_attn_outp_proj = block_linear_stats(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, cfg.n_embd)["flops_per_token"]
-            # 1 for fwd, 2 for bwd
-            flops_per_token += 3 * cfg.n_layer * (flops_per_token_mlp_1 + flops_per_token_mlp_2 + flops_per_token_attn_head_proj + flops_per_token_attn_outp_proj)
+            for module in self.modules():
+                if isinstance(module, BlockLinear):
+                    flops_per_token += 3 * module.flops_per_token() # 1 for fwd, 2 for bwd
         else:
             flops_per_token = 6*self.get_num_params() # 2 for fwd, 4 for bwd
         L, H, Q, = cfg.n_layer, cfg.n_head, cfg.n_embd//cfg.n_head
