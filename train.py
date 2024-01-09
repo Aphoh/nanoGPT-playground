@@ -305,7 +305,12 @@ if wandb_log and master_process:
     wandb.init(project=wandb_project, config=config)
     inner_model = model.module if ddp else model
     wandb.watch(inner_model, log="all", log_freq=eval_interval)
-    wandb.log({"flops_per_token": inner_model.estimate_flops_per_token()})
+    wandb.log(
+        {
+            "flops_per_token": inner_model.estimate_flops_per_token(),
+            "num_parameters": inner_model.get_num_params(),
+        }
+    )
 
 # training loop
 X, Y = get_batch("train")  # fetch the very first batch
