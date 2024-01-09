@@ -10,8 +10,8 @@ weight_decay = 1e-1
 wandb_log = True  # override via command line if you like
 wandb_project = "gpt2-mini-block"
 dataset = "openwebtext"
-gradient_accumulation_steps = 1
-batch_size = 64
+gradient_accumulation_steps = 5 * 8
+batch_size = 12
 block_size = 1024  # context of up to 256 previous characters
 
 # baby GPT model :)
@@ -30,8 +30,8 @@ block_k = 16
 
 
 learning_rate = 6e-4
-max_iters = 600000
-lr_decay_iters = 600000  # make equal to max_iters usually
+max_iters = 100000
+lr_decay_iters = 100000  # make equal to max_iters usually
 min_lr = 1e-4  # learning_rate / 10 usually
 
 warmup_iters = 100  # not super necessary potentially
