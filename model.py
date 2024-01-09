@@ -42,17 +42,32 @@ class LayerNorm(nn.Module):
     def forward(self, input):
         return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
     
-def block_linear_flops_per_token(m, k, n, in_features, out_features):
+def block_linear_stats(m: int, k: int, n: int, in_features: int, out_features: int):
+    """Computes various stats for the block linear layer
+
+    Args:
+        m (int): the m dimension the input token is reshaped into
+        k (int): the k dimension the input token is reshaped into 
+        n (int): the n dimension of the output token 
+        in_features (int): the number of features in the input token, must be divisible by (m*k)
+        out_features (int): the number of features in the output token, must be divisible by (m*n)
+
+    Returns:
+        int: output flops per token
+    """
     in_mats = in_features // (m*k)
     out_mats = out_features // (m*n)
     per_in_mat = 2 * m * n * k
     per_out_mat = per_in_mat * in_mats * out_mats
-    post_add = per_out_mat + m * n * out_mats
-    return post_add
+    flops_per_token = per_out_mat + m * n * out_mats
+    n_weights = in_mats * out_mats * n * k
+    flops_per_token_per_weight = flops_per_token / n_weights
+    return {'flops_per_token': flops_per_token, 'flops_per_token_per_weight': flops_per_token_per_weight, 'n_weights': n_weights}
+
 class BlockLinear(nn.Module):
     """
-    Linear layer that takes input data as a sequence of 16x16 matrices and 
-    transforms it into another sequence of 16x16 matrices
+    Linear layer that takes input data as a sequence of m x k matrices and 
+    transforms it into another sequence of m x n matrices
     """
     in_features: int
     out_features: int
@@ -81,7 +96,7 @@ class BlockLinear(nn.Module):
         return self.weight.numel() / self.in_features
     
     def flops_per_token(self):
-        return block_linear_flops_per_token(self.m, self.k, self.n, self.in_features, self.out_features)
+        return block_linear_stats(self.m, self.k, self.n, self.in_features, self.out_features)["flops_per_token"]
 
     def reset_parameters(self):
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
@@ -405,10 +420,10 @@ class GPT(nn.Module):
         cfg = self.config
         flops_per_token = cfg.n_embd # embedding backprop
         if cfg.block_linear:
-            flops_per_token_mlp_1 = block_linear_flops_per_token(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, cfg.mlp_ratio * cfg.n_embd)
-            flops_per_token_mlp_2 = block_linear_flops_per_token(cfg.block_m, cfg.block_k, cfg.block_n, cfg.mlp_ratio * cfg.n_embd, cfg.n_embd)
-            flops_per_token_attn_head_proj = block_linear_flops_per_token(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, 3 * cfg.n_embd)
-            flops_per_token_attn_outp_proj = block_linear_flops_per_token(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, cfg.n_embd)
+            flops_per_token_mlp_1 = block_linear_stats(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, cfg.mlp_ratio * cfg.n_embd)["flops_per_token"]
+            flops_per_token_mlp_2 = block_linear_stats(cfg.block_m, cfg.block_k, cfg.block_n, cfg.mlp_ratio * cfg.n_embd, cfg.n_embd)["flops_per_token"]
+            flops_per_token_attn_head_proj = block_linear_stats(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, 3 * cfg.n_embd)["flops_per_token"]
+            flops_per_token_attn_outp_proj = block_linear_stats(cfg.block_m, cfg.block_k, cfg.block_n, cfg.n_embd, cfg.n_embd)["flops_per_token"]
             # 1 for fwd, 2 for bwd
             flops_per_token += 3 * cfg.n_layer * (flops_per_token_mlp_1 + flops_per_token_mlp_2 + flops_per_token_attn_head_proj + flops_per_token_attn_outp_proj)
         else:
