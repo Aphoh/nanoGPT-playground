@@ -9,30 +9,11 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 
 import math
 import inspect
-from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-
-
-@dataclass
-class GPTConfig:
-    block_size: int = 1024
-    vocab_size: int = 50304  # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
-    n_layer: int = 12
-    n_head: int = 12
-    n_embd: int = 768
-    dropout: float = 0.0
-    bias: bool = True  # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-    block_linear: bool = (
-        False  # False: use Linear layers, like GPT-2. False: use BlockLinear layer
-    )
-    block_m: int = 8  # m dimension for block linear layer
-    block_k: int = 16  # k dimension for block linear layer
-    block_n: int = 32  # n dimension for block linear layer
-    mlp_ratio: int = 4  # ratio of mlp middle hidden dimension to embedding dimension
-    mlp_init_std: float = 0.02  # std dev of gaussian initialization for mlp weights
+from config import GPTConfig
 
 
 class LayerNorm(nn.Module):
@@ -274,6 +255,13 @@ class MLP(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
         LinCls = BlockLinear if config.block_linear else nn.Linear
+        args = {"bias": config.bias}
+        if config.block_linear:
+            args = args | {
+                "m": config.block_m,
+                "n": config.block_n,
+                "k": config.block_k,
+            }
         # here we adjust the middle size for block linear to maintain the same number of weights
         # and get purely more flops/token from block_m
         middle_size = (
@@ -281,23 +269,9 @@ class MLP(nn.Module):
             * config.mlp_ratio
             * (config.block_m**2 if config.block_linear else 1)
         )
-        self.c_fc = LinCls(
-            config.n_embd,
-            middle_size,
-            m=config.block_m,
-            n=config.block_n,
-            k=config.block_k,
-            bias=config.bias,
-        )
+        self.c_fc = LinCls(config.n_embd, middle_size, **args)
         self.gelu = nn.GELU()
-        self.c_proj = LinCls(
-            middle_size,
-            config.n_embd,
-            m=config.block_m,
-            n=config.block_n,
-            k=config.block_k,
-            bias=config.bias,
-        )
+        self.c_proj = LinCls(middle_size, config.n_embd, **args)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):

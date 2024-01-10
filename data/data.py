@@ -26,7 +26,7 @@ class TextDataset(Dataset):
 
 
 def get_data_loaders(
-    data_dir: str, batch_size: int, block_size: int, device: torch.device, num_workers=0
+    data_dir: str, batch_size: int, block_size: int, device: torch.device, num_workers=4
 ) -> tuple[DataLoader, DataLoader]:
     train_dataset = TextDataset(data_dir, "train", block_size)
     val_dataset = TextDataset(data_dir, "val", block_size)
@@ -42,3 +42,9 @@ def get_data_loaders(
     train_loader = DataLoader(train_dataset, **attrs)
     val_loader = DataLoader(val_dataset, **attrs)
     return train_loader, val_loader
+
+
+def make_iter(loader: DataLoader, device: torch.device):
+    while True:
+        for elem in iter(loader):
+            yield [x.to(device, non_blocking=True) for x in elem]
