@@ -542,17 +542,17 @@ class GPT(nn.Module):
                     flops_per_token += 6 * module.weight.numel()
         else:
             flops_per_token = 6 * self.get_num_params()  # 2 for fwd, 4 for bwd
-        (
-            L,
-            H,
-            Q,
-        ) = (
-            cfg.n_layer,
-            cfg.n_head,
-            cfg.n_embd // cfg.n_head,
-        )
+        L = cfg.n_layer
+        H = cfg.n_head
+        Q = cfg.n_embd // cfg.n_head
         flops_per_token += 12 * L * H * Q * Q
         return flops_per_token
+
+    def estimate_flops_per_token_per_weight(self):
+        """
+        estimate the flops per token per weight for a forward + backward pass through the model
+        """
+        return self.estimate_flops_per_token() / self.get_num_params()
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
