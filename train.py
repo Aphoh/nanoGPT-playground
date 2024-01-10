@@ -21,6 +21,7 @@ import time
 import math
 import pickle
 from contextlib import nullcontext
+from omegaconf import OmegaConf
 
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -66,7 +67,7 @@ if __name__ == "__main__":
         import wandb
 
         wandb.init(
-            project=cfg.wandb_project, config=cfg
+            project=cfg.wandb_project, config=OmegaConf.to_container(cfg)
         )  # do this here so we can log everything
 
     print(f"tokens per iteration will be: {tokens_per_iter:,}")

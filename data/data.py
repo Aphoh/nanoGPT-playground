@@ -37,7 +37,7 @@ def get_data_loaders(
     }
     if device.type == "cuda":
         attrs["pin_memory"] = True
-        attrs["pin_memory_device"] = device
+        attrs["pin_memory_device"] = str(device)
 
     train_loader = DataLoader(train_dataset, **attrs)
     val_loader = DataLoader(val_dataset, **attrs)
