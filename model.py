@@ -139,6 +139,9 @@ class BlockLinear(nn.Module):
             res += self.bias
         return res.contiguous().view(res.size(0), res.size(1), self.out_features)
 
+    def __repr__(self):
+        return f"BlockLinear(in_features={self.in_features}, out_features={self.out_features}, m={self.m}, k={self.k}, n={self.n}, bias={self.bias is not None})"
+
 
 def test_block_linear():
     with torch.no_grad():
@@ -278,9 +281,23 @@ class MLP(nn.Module):
             * config.mlp_ratio
             * (config.block_m**2 if config.block_linear else 1)
         )
-        self.c_fc = LinCls(config.n_embd, middle_size, bias=config.bias)
+        self.c_fc = LinCls(
+            config.n_embd,
+            middle_size,
+            m=config.block_m,
+            n=config.block_n,
+            k=config.block_k,
+            bias=config.bias,
+        )
         self.gelu = nn.GELU()
-        self.c_proj = LinCls(middle_size, config.n_embd, bias=config.bias)
+        self.c_proj = LinCls(
+            middle_size,
+            config.n_embd,
+            m=config.block_m,
+            n=config.block_n,
+            k=config.block_k,
+            bias=config.bias,
+        )
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):

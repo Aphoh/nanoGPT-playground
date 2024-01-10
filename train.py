@@ -232,6 +232,9 @@ if block_size < model.config.block_size:
     ] = block_size  # so that the checkpoint will have the right value
 model.to(device)
 
+print("Model")
+print(model)
+
 # initialize a GradScaler. If enabled=False scaler is a no-op
 scaler = torch.cuda.amp.GradScaler(enabled=(dtype == "float16"))
 
