@@ -60,14 +60,8 @@ def block_linear_stats(m: int, k: int, n: int, in_features: int, out_features: i
     Returns:
         int: output flops per token
     """
-    in_mats = in_features // (m * k)
-    out_mats = out_features // (m * n)
-    per_in_mat = 2 * m * n * k
-    per_out_mat = per_in_mat * in_mats * out_mats
-    flops_per_token = (
-        per_out_mat + m * n * in_mats
-    )  # multiplication flops + adding flops
-    n_weights = in_mats * out_mats * n * k
+    flops_per_token = (2 * in_features * out_features) // m + (in_features * n) // k
+    n_weights = (in_features * out_features) // int(m**2)
     flops_per_token_per_weight = flops_per_token / n_weights
     return {
         "flops_per_token": flops_per_token,
@@ -148,10 +142,14 @@ class BlockLinear(nn.Module):
 
 def test_block_linear():
     with torch.no_grad():
-        layer = BlockLinear(128, 256, 4, 16, 8)
-        x = torch.randn(1, 2, 128)
+        in_f, out_f = 128, 256
+        B, T = 1, 2
+        m, k, n = 4, 16, 8
+        in_mat, out_mat = in_f // (m * k), out_f // (m * n)
+        layer = BlockLinear(in_f, out_f, m, k, n)
+        x = torch.randn(B, T, in_f)
         y = layer(x)[0, 0]
-        x = x.view(1, 2, 2, 4, 16)[0, 0]  # just look at batch id 0, seq id 0
+        x = x.view(B, T, in_mat, m, k)[0, 0]  # just look at batch id 0, seq id 0
         val_y_batch = torch.matmul(x, layer.weight.transpose(-1, -2))
         val_y_summed = val_y_batch.sum(
             dim=1
@@ -160,16 +158,28 @@ def test_block_linear():
             y.view(-1), atol=1e-5
         ), "BlockLinear forward pass failed"
 
+        # test the flops per token calculation
+        stats = block_linear_stats(m, k, n, in_f, out_f)
+        assert stats["flops_per_token"] == 2 * in_f * out_f // m + in_f * n // k
+        assert stats["flops_per_token_per_weight"] >= 2 * m
+
+
+def test_model_flops_per_token():
+    cfg = GPTConfig(n_layer=4, n_embd=512, bias=False, block_linear=True, n_head=4)
+    model = GPT(cfg)
+    flops_per_token = model.estimate_flops_per_token()
+    # block_m - 1 because it should be a little less
+    assert flops_per_token >= 2 * (cfg.block_m - 1) * model.get_num_params()
+
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        LinCls = BlockLinear if config.block_linear else nn.Linear
-        self.c_attn = LinCls(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
         # output projection
-        self.c_proj = LinCls(config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
@@ -528,6 +538,8 @@ class GPT(nn.Module):
                     flops_per_token += (
                         3 * module.flops_per_token()
                     )  # 1 for fwd, 2 for bwd
+                elif isinstance(module, nn.Linear):
+                    flops_per_token += 6 * module.weight.numel()
         else:
             flops_per_token = 6 * self.get_num_params()  # 2 for fwd, 4 for bwd
         (
