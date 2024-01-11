@@ -97,8 +97,6 @@ if __name__ == "__main__":
         data_dir,
         cfg.batch_size,
         cfg.gpt.block_size,
-        device,
-        num_workers=cfg.num_workers,
     )
     train_iter = make_iter(train_loader, device)
 
