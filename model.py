@@ -84,7 +84,7 @@ class BlockLinear(nn.Module):
         self.in_mats = in_features // (m * k)
         self.out_mats = out_features // (m * n)
         self.weight = nn.Parameter(
-            torch.empty(self.out_mats, self.in_mats, n, k, device=device, dtype=dtype)
+            torch.empty(self.out_mats, self.in_mats, k, n, device=device, dtype=dtype)
         )
 
         if bias:
@@ -114,33 +114,52 @@ class BlockLinear(nn.Module):
 
     def forward(self, input):
         # input is (B, T, in_features)
-        input = input.view(input.size(0), input.size(1), self.in_mats, self.m, self.k)
-        res = torch.einsum("btkij,lkmj->btlim", [input, self.weight])
+        B, T, _ = input.shape
+        input = input.view(B * T, self.in_mats, self.m, self.k)
+        res = block_linear(input, self.weight)
         if self.bias is not None:
             res += self.bias
-        return res.contiguous().view(res.size(0), res.size(1), self.out_features)
+        return res.view(B, T, self.out_features)
 
     def __repr__(self):
         return f"BlockLinear(in_features={self.in_features}, out_features={self.out_features}, m={self.m}, k={self.k}, n={self.n}, bias={self.bias is not None})"
 
 
+@torch.jit.script
+def block_linear(x, W):
+    """
+    x: [B, in_mat, m, k]
+    W: [out_mat, in_mat, k, n]
+    output: [B, out_mat, m, n]
+    """
+    out_mat = W.size(0)
+    xe = x.unsqueeze(1).expand(-1, out_mat, -1, -1, -1)
+    We = W.unsqueeze(
+        0
+    )  # [out_mat, in_mat, k, n] -> [1, out_mat, in_mat, k, n] adds an extra dim at the start so that x will broadcast across B
+    res = torch.matmul(xe, We).sum(
+        dim=2
+    )  # [B, out_mat, in_mat, m, n] -> [B, out_mat, m, n]
+    return res
+
+
 def test_block_linear():
     with torch.no_grad():
-        in_f, out_f = 128, 256
-        B, T = 1, 2
-        m, k, n = 4, 16, 8
-        in_mat, out_mat = in_f // (m * k), out_f // (m * n)
-        layer = BlockLinear(in_f, out_f, m, k, n)
-        x = torch.randn(B, T, in_f)
-        y = layer(x)[0, 0]
-        x = x.view(B, T, in_mat, m, k)[0, 0]  # just look at batch id 0, seq id 0
-        val_y_batch = torch.matmul(x, layer.weight.transpose(-1, -2))
-        val_y_summed = val_y_batch.sum(
-            dim=1
-        )  # [out_mat, in_mat, m, n], sum over in_mats dimension
-        assert val_y_summed.view(-1).allclose(
-            y.view(-1), atol=1e-5
-        ), "BlockLinear forward pass failed"
+        in_f = 512
+        out_f = 1024
+        m, n, k = 16, 16, 16
+        in_mat = in_f // (m * k)
+        out_mat = out_f // (m * n)
+        B = 4
+        a = torch.randn(B, in_mat, m, k)
+        b = torch.randn(out_mat, in_mat, k, n)
+        res2 = block_linear(a, b).squeeze()
+        for j in range(B):
+            xj = a[j]
+            for i in range(b.size(0)):
+                Wi = b[i]
+                res = torch.matmul(xj, Wi).sum(0)
+                assert torch.allclose(res, res2[j, i])
 
         # test the flops per token calculation
         stats = block_linear_stats(m, k, n, in_f, out_f)
