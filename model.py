@@ -132,15 +132,13 @@ def block_linear(x, W):
     W: [out_mat, in_mat, k, n]
     output: [B, out_mat, m, n]
     """
-    out_mat = W.size(0)
-    xe = x.unsqueeze(1).expand(-1, out_mat, -1, -1, -1)
-    We = W.unsqueeze(
-        0
-    )  # [out_mat, in_mat, k, n] -> [1, out_mat, in_mat, k, n] adds an extra dim at the start so that x will broadcast across B
-    res = torch.matmul(xe, We).sum(
-        dim=2
-    )  # [B, out_mat, in_mat, m, n] -> [B, out_mat, m, n]
-    return res
+    B, in_mat, m, k = x.shape
+    out_mat, in_mat, k, n = W.shape
+    out = torch.empty(B, out_mat, m, n, device=x.device, dtype=x.dtype)
+    for i in range(out_mat):
+        Wi = W[i].unsqueeze(0)
+        out[:, i] = torch.matmul(x, Wi).sum(1)
+    return out
 
 
 def test_block_linear():
