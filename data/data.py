@@ -32,7 +32,7 @@ def get_data_loaders(
     val_dataset = TextDataset(data_dir, "val", block_size)
     attrs = {
         "num_workers": num_workers,
-        "shuffle": True,
+        "shuffle": False,
         "batch_size": batch_size,
     }
     if device.type == "cuda":
