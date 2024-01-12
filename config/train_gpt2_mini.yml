@@ -6,12 +6,14 @@ wandb_log: True
 wandb_project: "nanoGPT-playground"
 
 # these make the total batch size be ~0.5M
-# 12 batch size * 1024 block size * 5 gradaccum * 8 GPUs : 491,520
+# 12 batch size * 256 block size * 160 gradaccum = 491,520
 batch_size: 12
 gpt:
   block_size: 256
+  n_layer: 6
+  n_embd: 512
 
-gradient_accumulation_steps: 40 # 5 * 8
+gradient_accumulation_steps: 160 # 40 * 4 GPUs
 
 # this makes total number of tokens be 300B
 max_iters: 600000
