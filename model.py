@@ -207,12 +207,14 @@ class CausalSelfAttention(nn.Module):
             print(
                 "WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0"
             )
+            print(
+                "WARNING: this attention may be somewhat untested. Use pytorch >= 2.0 plz"
+            )
             # causal mask to ensure that attention is only applied to the left in the input sequence
+            size = config.block_size * config.t_expand
             self.register_buffer(
                 "bias",
-                torch.tril(torch.ones(config.block_size, config.block_size)).view(
-                    1, 1, config.block_size, config.block_size
-                ),
+                torch.tril(torch.ones(size, size)).view(1, 1, size, size),
             )
 
     def forward(self, x):
@@ -314,22 +316,22 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
-        assert config.vocab_size is not None
-        assert config.block_size is not None
         self.config = config
 
         self.transformer = nn.ModuleDict(
             dict(
-                wte=nn.Embedding(config.vocab_size, config.n_embd),
-                wpe=nn.Embedding(config.block_size, config.n_embd),
+                wte=nn.Embedding(config.vocab_size, config.n_embd * config.t_expand),
+                wpe=nn.Embedding(config.block_size * config.t_expand, config.n_embd),
                 drop=nn.Dropout(config.dropout),
                 h=nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
                 ln_f=LayerNorm(config.n_embd, bias=config.bias),
             )
         )
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(
+            config.n_embd * config.t_expand, config.vocab_size, bias=False
+        )
         # with weight tying when using torch.compile() some warnings get generated:
         # "UserWarning: functional_call was passed multiple values for tied weights.
         # This behavior is deprecated and will be an error in future versions"
@@ -380,15 +382,19 @@ class GPT(nn.Module):
         assert (
             t <= self.config.block_size
         ), f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device)  # shape (t)
+        pos = torch.arange(
+            0, t * self.config.t_expand, dtype=torch.long, device=device
+        )  # shape (t * expand)
 
         # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+        tok_emb = self.transformer.wte(idx)  # shape (b, t, n_embd * expand)
+        pos_emb = self.transformer.wpe(pos)  # (t * expand, n_embd)
+        tok_expanded = tok_emb.view(b, t * self.config.t_expand, self.config.n_embd)
+        x = self.transformer.drop(tok_expanded + pos_emb)
         for block in self.transformer.h:
-            x = block(x)
+            x = block(x)  # shape (b, t * expand, n_embd)
         x = self.transformer.ln_f(x)
+        x = x.view(b, t, self.config.n_embd * self.config.t_expand)
 
         if targets is not None:
             # if we are given some desired targets also calculate the loss
@@ -410,6 +416,7 @@ class GPT(nn.Module):
         # e.g. we may load the GPT2 pretrained model checkpoint (block size 1024)
         # but want to use a smaller block size for some smaller, simpler model
         assert block_size <= self.config.block_size
+        assert self.config.t_expand == 1, "not implemented for t_expand > 1"
         self.config.block_size = block_size
         self.transformer.wpe.weight = nn.Parameter(
             self.transformer.wpe.weight[:block_size]
@@ -554,7 +561,7 @@ class GPT(nn.Module):
         H = cfg.n_head
         Q = cfg.n_embd // cfg.n_head
         flops_per_token += 12 * L * H * Q * Q
-        return flops_per_token
+        return self.config.t_expand * flops_per_token
 
     def estimate_flops_per_token_per_weight(self):
         """
@@ -621,3 +628,14 @@ def test_gpt_flops_per_token_per_weight():
         round(flops_per_token_per_weight) == 6
     ), "Should be 6 flops per token per weight"
     assert model.get_num_params() == num_params, "Should have same number of params"
+
+    cfg.n_layer = 6
+    cfg.n_embd = 512
+    cfg.vocab_size = 512  # super shrink this so we actually see the flop increase
+    for t_expand in [2, 4, 8]:
+        cfg.t_expand = t_expand
+        model = GPT(cfg)
+        flops_per_token_per_weight = model.estimate_flops_per_token_per_weight()
+        assert round(flops_per_token_per_weight) > 6 * (t_expand - 1)
+        print((cfg.n_embd * cfg.t_expand * cfg.vocab_size) / model.get_num_params())
+        assert model.get_num_params() <= (num_params * 1.5), "Should a few more params"

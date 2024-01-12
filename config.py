@@ -14,14 +14,18 @@ class GPTConfig:
     n_embd: int = 768
     dropout: float = 0.0
     bias: bool = True  # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+
     block_linear: bool = (
         False  # False: use Linear layers, like GPT-2. False: use BlockLinear layer
     )
     block_m: int = 8  # m dimension for block linear layer
     block_k: int = 16  # k dimension for block linear layer
     block_n: int = 32  # n dimension for block linear layer
+
     mlp_ratio: int = 4  # ratio of mlp middle hidden dimension to embedding dimension
     mlp_init_std: float = 0.02  # std dev of gaussian initialization for mlp weights
+
+    t_expand: int = 1  # expand the number of embedding outputs per token by this amount
 
 
 @dataclass
