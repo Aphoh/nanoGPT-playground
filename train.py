@@ -37,6 +37,7 @@ if __name__ == "__main__":
     # various inits, derived attributes, I/O setup
     ddp = int(os.environ.get("RANK", -1)) != -1  # is this a ddp run?
     gradient_accumulation_steps = cfg.gradient_accumulation_steps
+    device = cfg.device
     if ddp:
         init_process_group(backend=cfg.backend)
         ddp_rank = int(os.environ["RANK"])
@@ -78,7 +79,7 @@ if __name__ == "__main__":
     torch.manual_seed(1337 + seed_offset)
     torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
     torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
-    device = torch.device(cfg.device)
+    device = torch.device(device)
     device_type = device.type  # for later use in torch.autocast
     # note: float16 data type will automatically use a GradScaler
     ptdtype = {

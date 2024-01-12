@@ -12,6 +12,7 @@ gpt:
   block_size: 256
   n_layer: 6
   n_embd: 512
+  n_head: 8
 
 gradient_accumulation_steps: 160 # 40 * 4 GPUs
 
