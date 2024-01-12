@@ -14,15 +14,15 @@ batch_size: 12
 
 # baby GPT model :)
 gpt:
-  block_size: 256
-  n_layer: 4
-  n_head: 8
-  n_embd: 256
+  block_size: 128
+  n_layer: 3
+  n_head: 4
+  n_embd: 128
   dropout: 0.0
   # block linear stuff
   block_linear: True
   bias: False
-  mlp_ratio: 1
+  mlp_ratio: 4
   block_m: 8
   block_n: 32
   block_k: 16
@@ -30,6 +30,6 @@ gpt:
 learning_rate: 6e-4
 max_iters: 100000
 lr_decay_iters: 100000 # make equal to max_iters usually
-min_lr: 1e-4 # learning_rate / 10 usually
+min_lr: 0.0 # compute this automatically learning_rate / 10 usually
 
 warmup_iters: 100 # not super necessary potentially

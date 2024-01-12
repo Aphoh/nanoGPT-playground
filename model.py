@@ -592,3 +592,32 @@ class GPT(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
+
+
+def test_gpt_flops_per_token_per_weight():
+    cfg = GPTConfig(
+        n_layer=4,
+        n_embd=256,
+        bias=False,
+        n_head=8,
+        block_m=16,
+        block_linear=True,
+        block_k=16,
+        block_n=16,
+        mlp_ratio=4,
+        block_size=256,
+        vocab_size=50304,
+    )
+    model = GPT(cfg)
+    flops_per_token_per_weight = model.estimate_flops_per_token_per_weight()
+    num_params = model.get_num_params()
+    assert (
+        round(flops_per_token_per_weight) == 18
+    ), "Should be 18 flops per token per weight"
+    cfg.block_linear = False
+    model = GPT(cfg)
+    flops_per_token_per_weight = model.estimate_flops_per_token_per_weight()
+    assert (
+        round(flops_per_token_per_weight) == 6
+    ), "Should be 6 flops per token per weight"
+    assert model.get_num_params() == num_params, "Should have same number of params"

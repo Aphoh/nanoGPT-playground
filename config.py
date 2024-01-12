@@ -75,12 +75,16 @@ def get_config() -> Config:
     cfg: Config = OmegaConf.structured(Config)
     config_file = sys.argv[1]
     if config_file.endswith(".yml") and "--" not in config_file:
+        print("Loading config from", config_file)
         cfg: Config = OmegaConf.merge(cfg, OmegaConf.load(config_file))
         sys.argv.pop(1)  # remove the config file
     cfg: Config = OmegaConf.merge(cfg, OmegaConf.from_cli())
     cfg.out_dir = os.environ.get("OUT_DIR", cfg.out_dir)  # override from env var
     cfg.data_dir = os.environ.get("DATA_DIR", cfg.data_dir)  # override from env var
+    if cfg.min_lr == 0.0:
+        cfg.min_lr = cfg.learning_rate / 10.0
     OmegaConf.set_readonly(cfg, True)  # make read-only to avoid accidental overwrites
+    print("Final config:", OmegaConf.to_yaml(cfg))
     return cfg
 
 
