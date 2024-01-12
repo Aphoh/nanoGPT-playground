@@ -36,6 +36,7 @@ if __name__ == "__main__":
 
     # various inits, derived attributes, I/O setup
     ddp = int(os.environ.get("RANK", -1)) != -1  # is this a ddp run?
+    gradient_accumulation_steps = cfg.gradient_accumulation_steps
     if ddp:
         init_process_group(backend=cfg.backend)
         ddp_rank = int(os.environ["RANK"])
@@ -50,14 +51,14 @@ if __name__ == "__main__":
         # world_size number of processes will be training simultaneously, so we can scale
         # down the desired gradient accumulation iterations per process proportionally
         assert cfg.gradient_accumulation_steps % ddp_world_size == 0
-        cfg.gradient_accumulation_steps //= ddp_world_size
+        gradient_accumulation_steps = cfg.gradient_accumulation_steps // ddp_world_size
     else:
         # if not ddp, we are running on a single gpu, and one process
         master_process = True
         seed_offset = 0
         ddp_world_size = 1
     tokens_per_iter = (
-        cfg.gradient_accumulation_steps
+        gradient_accumulation_steps
         * ddp_world_size
         * cfg.batch_size
         * cfg.gpt.block_size
@@ -285,19 +286,19 @@ if __name__ == "__main__":
 
         # forward backward update, with optional gradient accumulation to simulate larger batch size
         # and using the GradScaler if data type is float16
-        for micro_step in range(cfg.gradient_accumulation_steps):
+        for micro_step in range(gradient_accumulation_steps):
             if ddp:
                 # in DDP training we only need to sync gradients at the last micro step.
                 # the official way to do this is with model.no_sync() context manager, but
                 # I really dislike that this bloats the code and forces us to repeat code
                 # looking at the source of that context manager, it just toggles this variable
                 model.require_backward_grad_sync = (
-                    micro_step == cfg.gradient_accumulation_steps - 1
+                    micro_step == gradient_accumulation_steps - 1
                 )
             with ctx:
                 logits, loss = model(X, Y)
                 loss = (
-                    loss / cfg.gradient_accumulation_steps
+                    loss / gradient_accumulation_steps
                 )  # scale the loss to account for gradient accumulation
             # immediately async prefetch next batch while model is doing the forward pass on the GPU
             X, Y = next(train_iter)
@@ -320,10 +321,10 @@ if __name__ == "__main__":
         if iter_num % cfg.log_interval == 0 and master_process:
             # get loss as float. note: this is a CPU-GPU sync point
             # scale up to undo the division above, approximating the true total loss (exact would have been a sum)
-            lossf = loss.item() * cfg.gradient_accumulation_steps
+            lossf = loss.item() * gradient_accumulation_steps
             if local_iter_num >= 5:  # let the training loop settle a bit
                 mfu = raw_model.estimate_mfu(
-                    cfg.batch_size * cfg.gradient_accumulation_steps, dt
+                    cfg.batch_size * gradient_accumulation_steps, dt
                 )
                 running_mfu = (
                     mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
