@@ -329,16 +329,16 @@ class GPT(nn.Module):
                 ln_f=LayerNorm(config.n_embd, bias=config.bias),
             )
         )
-        self.lm_head = nn.Linear(
-            config.n_embd * config.t_expand, config.vocab_size, bias=False
-        )
-        # with weight tying when using torch.compile() some warnings get generated:
-        # "UserWarning: functional_call was passed multiple values for tied weights.
-        # This behavior is deprecated and will be an error in future versions"
-        # not 100% sure what this is, so far seems to be harmless. TODO investigate
-        self.transformer.wte.weight = (
-            self.lm_head.weight
-        )  # https://paperswithcode.com/method/weight-tying
+
+        if config.t_expand == 1 or not config.t_expand_sep_lm_head:
+            self.lm_head = nn.Linear(
+                config.n_embd * config.t_expand, config.vocab_size, bias=False
+            )
+            self.transformer.wte.weight = (
+                self.lm_head.weight
+            )  # https://paperswithcode.com/method/weight-tying
+        else:
+            self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
         # init all weights
         self.apply(self._init_weights)
@@ -394,7 +394,12 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             x = block(x)  # shape (b, t * expand, n_embd)
         x = self.transformer.ln_f(x)
-        x = x.view(b, t, self.config.n_embd * self.config.t_expand)
+        if self.config.t_expand == 1 or not self.config.t_expand_sep_lm_head:
+            x = x.view(b, t, self.config.n_embd * self.config.t_expand)
+        else:
+            every = self.config.t_expand
+            x = x[:, every - 1 :: every, :]  # (b, t, n_embd)
+            assert x.shape[1] == t
 
         if targets is not None:
             # if we are given some desired targets also calculate the loss

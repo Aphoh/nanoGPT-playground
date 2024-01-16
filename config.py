@@ -26,6 +26,7 @@ class GPTConfig:
     mlp_init_std: float = 0.02  # std dev of gaussian initialization for mlp weights
 
     t_expand: int = 1  # expand the number of embedding outputs per token by this amount
+    t_expand_sep_lm_head: bool = True
 
 
 @dataclass
