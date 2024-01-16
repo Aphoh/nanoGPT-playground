@@ -5,8 +5,7 @@
 wandb_log: True
 wandb_project: "nanoGPT-playground"
 
-# these make the total batch size be ~0.5M
-batch_size: 12
+batch_size: 256
 gpt:
   block_size: 96
   n_layer: 6

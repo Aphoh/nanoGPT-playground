@@ -26,7 +26,7 @@ if __name__ == "__main__":
         },
         num_proc=4,
         remove_columns=["question", "answer"],
-    )
+    ).shuffle(seed=42)
     dataset["val"] = dataset.pop("test")
 
     enc = PreTrainedTokenizerFast(
