@@ -207,7 +207,7 @@ class CausalSelfAttention(nn.Module):
         if (
             torch.cuda.is_available()
             and torch.cuda.get_device_capability()[0] >= 8
-            and not config.t_block_attn_mask  # can't use dao attention with t_block_attn_mask
+            and not config.t_expand_attn_mask  # can't use dao attention with t_block_attn_mask
         ):
             try:
                 import flash_attn
