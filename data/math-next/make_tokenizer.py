@@ -7,14 +7,13 @@ from tokenizers.pre_tokenizers import Whitespace, Digits, Sequence
 from tokenizers.processors import TemplateProcessing
 from datasets import load_dataset  # huggingface datasets
 
-dataset = load_dataset("math_dataset", "arithmetic__mul", num_proc=4)
+dataset = load_dataset("math_dataset", "algebra__sequence_next_term")
 dataset = dataset.map(
     lambda x: {
         "text": (x["question"][2:-3] + " answer " + x["answer"][2:-3]).replace(
             "*-", "* -"
         )
     },
-    num_proc=4,
     remove_columns=["question", "answer"],
 )
 dataset["val"] = dataset.pop("test")

@@ -17,14 +17,13 @@ num_proc = 8
 num_proc_load_dataset = num_proc
 
 if __name__ == "__main__":
-    dataset = load_dataset("math_dataset", "arithmetic__mul", num_proc=4)
+    dataset = load_dataset("math_dataset", "algebra__sequence_next_term")
     dataset = dataset.map(
         lambda x: {
             "text": (x["question"][2:-3] + " answer " + x["answer"][2:-3]).replace(
                 "*-", "* -"
             )
         },
-        num_proc=4,
         remove_columns=["question", "answer"],
     ).shuffle(seed=42)
     dataset["val"] = dataset.pop("test")

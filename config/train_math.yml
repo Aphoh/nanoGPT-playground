@@ -19,7 +19,7 @@ gradient_accumulation_steps: 1
 dataset: math
 
 # this makes total number of tokens be 300B
-max_iters: 200000
+max_iters: 100000
 lr_decay_iters: 100000
 
 # eval stuff
