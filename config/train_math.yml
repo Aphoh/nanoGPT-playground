@@ -16,7 +16,7 @@ gpt:
   bias: True
 
 gradient_accumulation_steps: 1
-dataset: math
+dataset: math-next
 
 # this makes total number of tokens be 300B
 max_iters: 100000
