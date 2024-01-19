@@ -15,6 +15,7 @@ gpt:
   n_head: 8
   bpl: True
   bpl_b: 4
+  bias: False
   mlp_ratio: 1
 
 gradient_accumulation_steps: 160 # 40 * 4 GPUs
