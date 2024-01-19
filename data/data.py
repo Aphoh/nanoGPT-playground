@@ -31,7 +31,7 @@ def get_data_loaders(
     train_dataset = TextDataset(data_dir, "train", block_size)
     val_dataset = TextDataset(data_dir, "val", block_size)
     attrs = {
-        "shuffle": False,
+        "shuffle": True,
         "batch_size": batch_size,
     }
     train_loader = DataLoader(train_dataset, **attrs)
