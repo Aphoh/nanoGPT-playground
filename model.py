@@ -51,6 +51,71 @@ def block_linear_stats(m: int, k: int, n: int, in_features: int, out_features: i
     }
 
 
+class BatchPemuteLinear(nn.Module):
+    """
+    Linear layer that takes input vectors of size n=mb and applies transformations/permutations
+    to them to produce another vector of size n=mb
+    """
+
+    n: int
+    m: int
+    b: int
+    weights: list[torch.Tensor]
+
+    def __init__(
+        self, n: int, b: int, device: torch.device = None, dtype: torch.dtype = None
+    ) -> None:
+        super().__init__()
+        assert n % b == 0, "b must divide n"
+        assert math.sqrt(n) == int(math.sqrt(n)), "n must be a perfect square"
+        assert b**2 / math.sqrt(n) >= 1, "b^2 must be >= sqrt(n)"
+        assert int(b**2) % int(math.sqrt(n)) == 0, "b^2 must be divisible by sqrt(n)"
+        self.n = n
+        self.b = b
+        self.m = n // b
+        self.num_stages = 2 * int(b**2) // int(math.sqrt(n))
+        self.weights = nn.ParameterList(
+            [
+                nn.Parameter(torch.empty(self.m, self.m, device=device, dtype=dtype))
+                for i in range(self.num_stages)
+            ]
+        )
+
+    def reset_parameters(self):
+        for i in range(self.num_stages):
+            nn.init.kaiming_uniform_(self.weights[i], a=math.sqrt(5))
+
+    def forward(self, x):
+        # input is (B, T, n)
+        B, T, n = x.shape
+        assert n == self.n
+        x = x.view(B, T, self.m, self.b)  # (B, T, m, b)
+        for i in range(self.num_stages):
+            x = self.weights[i].matmul(x)  # (B, T, m, b)
+            x = x.flatten().contiguous().view(B, T, self.m, self.b)  # channel mixing
+        x = x.view(B, T, self.n)
+        return x
+
+    def __repr__(self):
+        return f"BatchPemuteLinear(n={self.n}, b={self.b}, m={self.m}, num_stages={self.num_stages})"
+
+
+def test_batch_permute_linear():
+    n = 1024
+    b = 8
+    a = BatchPemuteLinear(n, b)
+    print(list(a.parameters()))
+    assert sum(p.numel() for p in a.parameters()) == int(
+        2 * n ** (3 / 2)
+    ), "Correct number of parameters"
+    for i in range(a.num_stages):
+        a.weights[i] = torch.eye(n // b, n // b)
+    inp = torch.randn(4, 16, n)
+    out = a(inp)
+    print(inp.shape, out.shape)
+    assert torch.allclose(inp, out), "Identity weights yield identity"
+
+
 class BlockLinear(nn.Module):
     """
     Linear layer that takes input data as a sequence of m x k matrices and
@@ -268,25 +333,32 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, config: GPTConfig):
         super().__init__()
-        LinCls = BlockLinear if config.block_linear else nn.Linear
-        args = {"bias": config.bias}
-        if config.block_linear:
-            args = args | {
-                "m": config.block_m,
-                "n": config.block_n,
-                "k": config.block_k,
-            }
-        # here we adjust the middle size for block linear to maintain the same number of weights
-        # and get purely more flops/token from block_m
-        middle_size = (
-            config.n_embd
-            * config.mlp_ratio
-            * (config.block_m**2 if config.block_linear else 1)
-        )
-        self.c_fc = LinCls(config.n_embd, middle_size, **args)
-        self.gelu = nn.GELU()
-        self.c_proj = LinCls(middle_size, config.n_embd, **args)
         self.dropout = nn.Dropout(config.dropout)
+        self.gelu = nn.GELU()
+        if config.bpl:
+            assert config.mlp_ratio == 1, "bpl only works with mlp_ratio=1"
+            assert not config.bias, "bpl only works with bias=False"
+            self.c_fc = BatchPemuteLinear(config.n_embd, config.bpl_b)
+            self.c_proj = BatchPemuteLinear(config.n_embd, config.bpl_b)
+        else:
+            LinCls = BlockLinear if config.block_linear else nn.Linear
+            args = {"bias": config.bias}
+            if config.block_linear:
+                args = args | {
+                    "m": config.block_m,
+                    "n": config.block_n,
+                    "k": config.block_k,
+                }
+            args = {"bias": config.bias}
+            # here we adjust the middle size for block linear to maintain the same number of weights
+            # and get purely more flops/token from block_m
+            middle_size = (
+                config.n_embd
+                * config.mlp_ratio
+                * (config.block_m**2 if config.block_linear else 1)
+            )
+            self.c_fc = LinCls(config.n_embd, middle_size, **args)
+            self.c_proj = LinCls(middle_size, config.n_embd, **args)
 
     def forward(self, x):
         x = self.c_fc(x)

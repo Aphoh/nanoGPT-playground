@@ -22,6 +22,9 @@ class GPTConfig:
     block_k: int = 16  # k dimension for block linear layer
     block_n: int = 32  # n dimension for block linear layer
 
+    bpl: bool = False  # use batch parallel linear layer
+    bpl_b: int = 8  # b dimension for batch parallel linear layer
+
     mlp_ratio: int = 4  # ratio of mlp middle hidden dimension to embedding dimension
     mlp_init_std: float = 0.02  # std dev of gaussian initialization for mlp weights
 
@@ -64,7 +67,7 @@ class Config:
     warmup_iters: int = 2000  # how many steps to warm up for
     lr_decay_iters: int = 600000  # should be ~= max_iters per Chinchilla
     # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
-    min_lr: float = 6e-5
+    min_lr: float = -1.0  # set to -1 to get override
     # DDP settings
     backend: str = "nccl"  # 'nccl', 'gloo', etc.
     # system
@@ -87,8 +90,12 @@ def get_config() -> Config:
     cfg: Config = OmegaConf.merge(cfg, OmegaConf.from_cli())
     cfg.out_dir = os.environ.get("OUT_DIR", cfg.out_dir)  # override from env var
     cfg.data_dir = os.environ.get("DATA_DIR", cfg.data_dir)  # override from env var
-    if cfg.min_lr == 0.0:
+    if cfg.min_lr == -1.0:
         cfg.min_lr = cfg.learning_rate / 10.0
+    assert not (
+        cfg.gpt.bpl and cfg.gpt.block_linear
+    ), "Can't use both bpl and block_linear"
+    assert cfg.min_lr <= cfg.learning_rate, "min_lr must be <= learning_rate"
     OmegaConf.set_readonly(cfg, True)  # make read-only to avoid accidental overwrites
     print("Final config:", OmegaConf.to_yaml(cfg))
     return cfg

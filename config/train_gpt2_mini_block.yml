@@ -30,6 +30,6 @@ gpt:
 learning_rate: 6e-4
 max_iters: 100000
 lr_decay_iters: 100000 # make equal to max_iters usually
-min_lr: 0.0 # compute this automatically learning_rate / 10 usually
+min_lr: -1.0 # compute this automatically learning_rate / 10 usually
 
 warmup_iters: 100 # not super necessary potentially
