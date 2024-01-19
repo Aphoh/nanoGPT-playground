@@ -95,10 +95,13 @@ if __name__ == "__main__":
 
     data_dir = os.path.join(cfg.data_dir, cfg.dataset)
 
-    train_loader, val_loader = get_data_loaders(
+    train_loader, _ = get_data_loaders(
         data_dir,
         cfg.batch_size,
         cfg.gpt.block_size,
+    )
+    train_eval_loader, val_eval_loader = get_data_loaders(
+        data_dir, cfg.batch_size, cfg.gpt.block_size, shuffle=False
     )
     train_iter = make_iter(train_loader, device)
 
@@ -195,8 +198,8 @@ if __name__ == "__main__":
         out = {}
         model.eval()
         for split, loader in [
-            ("train", make_iter(train_loader, device)),
-            ("val", make_iter(val_loader, device)),
+            ("train", make_iter(train_eval_loader, device)),
+            ("val", make_iter(val_eval_loader, device)),
         ]:
             losses = torch.zeros(cfg.eval_iters)
             for k, (X, Y) in zip(range(cfg.eval_iters), iter(loader)):
@@ -233,6 +236,7 @@ if __name__ == "__main__":
             }
         )
 
+    print("Training...")
     # training loop
     X, Y = next(train_iter)  # fetch the very first batch
     t0 = time.time()
