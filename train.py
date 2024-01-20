@@ -32,7 +32,7 @@ from data import get_data_loaders, make_iter
 from config import GPTConfig, Config, get_config
 
 if __name__ == "__main__":
-    cfg = get_config()
+    cfg: Config = get_config()
 
     # various inits, derived attributes, I/O setup
     ddp = int(os.environ.get("RANK", -1)) != -1  # is this a ddp run?
@@ -187,6 +187,7 @@ if __name__ == "__main__":
         print("compiling the model... (takes a ~minute)")
         unoptimized_model = model
         model = torch.compile(model)  # requires PyTorch 2.0
+        print("Compilation finished")
 
     # wrap model into DDP container
     if ddp:
@@ -236,7 +237,6 @@ if __name__ == "__main__":
             }
         )
 
-    print("Training...")
     # training loop
     X, Y = next(train_iter)  # fetch the very first batch
     t0 = time.time()

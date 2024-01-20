@@ -89,10 +89,16 @@ class BatchPemuteLinear(nn.Module):
         # input is (B, T, n)
         B, T, n = x.shape
         assert n == self.n
-        x = x.view(B, T, self.m, self.b)  # (B, T, m, b)
+        x = x.view(B * T * self.b, self.m)  # (B*T*b, m) get the m-size vectors
         for i in range(self.num_stages):
-            x = self.weights[i].matmul(x)  # (B, T, m, b)
-            x = x.flatten().contiguous().view(B, T, self.m, self.b)  # channel mixing
+            x = x.matmul(
+                self.weights[i]
+            )  # (B*T*b, m) I think pytorch likes square matrices more
+            x = (
+                x.view(B, T, self.b, self.m)
+                .transpose(-1, -2)
+                .reshape(B * T * self.b, self.m)
+            )
         x = x.view(B, T, self.n)
         return x
 
@@ -104,16 +110,23 @@ def test_batch_permute_linear():
     n = 1024
     b = 8
     a = BatchPemuteLinear(n, b)
+    m = n // b
     print(list(a.parameters()))
     assert sum(p.numel() for p in a.parameters()) == int(
         2 * n ** (3 / 2)
     ), "Correct number of parameters"
     for i in range(a.num_stages):
         a.weights[i] = torch.eye(n // b, n // b)
-    inp = torch.randn(4, 16, n)
+    B, T = 4, 16
+    inp = torch.randn(B, T, n)
     out = a(inp)
     print(inp.shape, out.shape)
     assert torch.allclose(inp, out), "Identity weights yield identity"
+
+    mat = torch.randn(m, m)
+    res1 = (inp.view(B, T * b, m) @ mat).view(B, T, m, b)
+    res2 = (inp.view(B, T, b, m) @ mat).view(B, T, m, b)
+    assert torch.allclose(res1, res2), "Matmul is the same as batch matmul"
 
 
 class BlockLinear(nn.Module):
@@ -272,7 +285,9 @@ class CausalSelfAttention(nn.Module):
         if (
             torch.cuda.is_available()
             and torch.cuda.get_device_capability()[0] >= 8
-            and not config.t_expand_attn_mask  # can't use dao attention with t_block_attn_mask
+            and not (
+                config.t_expand_attn_mask and config.t_expand > 1
+            )  # can't use dao attention with t_block_attn_mask
         ):
             try:
                 import flash_attn
