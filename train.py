@@ -100,9 +100,14 @@ if __name__ == "__main__":
         data_dir,
         cfg.batch_size,
         cfg.gpt.block_size,
+        num_workers=cfg.num_workers,
     )
     train_eval_loader, val_eval_loader = get_data_loaders(
-        data_dir, cfg.batch_size, cfg.gpt.block_size, shuffle=False
+        data_dir,
+        cfg.batch_size,
+        cfg.gpt.block_size,
+        shuffle=False,
+        num_workers=cfg.num_workers,
     )
     train_iter = make_iter(train_loader, device)
 

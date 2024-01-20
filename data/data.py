@@ -26,13 +26,14 @@ class TextDataset(Dataset):
 
 
 def get_data_loaders(
-    data_dir: str, batch_size: int, block_size: int, shuffle: bool = True
+    data_dir: str, batch_size: int, block_size: int, shuffle: bool = True, num_workers=0
 ) -> tuple[DataLoader, DataLoader]:
     train_dataset = TextDataset(data_dir, "train", block_size)
     val_dataset = TextDataset(data_dir, "val", block_size)
     attrs = {
         "shuffle": shuffle,
         "batch_size": batch_size,
+        "num_workers": num_workers,
     }
     train_loader = DataLoader(train_dataset, **attrs)
     val_loader = DataLoader(val_dataset, **attrs)
