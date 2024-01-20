@@ -311,7 +311,7 @@ class CausalSelfAttention(nn.Module):
 
         if self.dao_flash:
             y = self.flash(
-                qkv.view(B * T, 3, self.n_head, C // self.n_head),
+                qkv.view(B, T, 3, self.n_head, C // self.n_head),
                 causal=True,
                 dropout_p=self.dropout if self.training else 0.0,
             )
