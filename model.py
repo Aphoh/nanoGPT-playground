@@ -459,6 +459,9 @@ class GPT(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=self.config.mlp_init_std)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
+        if isinstance(module, BatchPemuteLinear):
+            for elem in module.weights:
+                torch.nn.init.normal_(elem, mean=0.0, std=self.config.mlp_init_std)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
