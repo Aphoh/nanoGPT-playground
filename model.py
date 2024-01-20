@@ -649,8 +649,15 @@ class GPT(nn.Module):
                     )  # 1 for fwd, 2 for bwd
                 elif isinstance(module, nn.Linear):
                     flops_per_token += 6 * module.weight.numel()
+        elif cfg.bpl:
+            n_projection_weights = (
+                4 * cfg.n_embd**2 * cfg.n_layer + cfg.vocab_size * cfg.n_embd
+            )
+            n_bpl_weights = self.get_num_params() - n_projection_weights
+            flops_per_token += 6 * n_projection_weights + 6 * cfg.bpl_b * n_bpl_weights
+
         else:
-            flops_per_token = 6 * self.get_num_params()  # 2 for fwd, 4 for bwd
+            flops_per_token += 6 * self.get_num_params()  # 2 for fwd, 4 for bwd
         L = cfg.n_layer
         H = cfg.n_head
         Q = cfg.n_embd // cfg.n_head
