@@ -233,7 +233,8 @@ if __name__ == "__main__":
                 "flops_per_token": inner_model.estimate_flops_per_token(),
                 "flops_per_token_per_weight": inner_model.estimate_flops_per_token_per_weight(),
                 "num_parameters": inner_model.get_num_params(),
-            }
+            },
+            global_step=0,
         )
 
     # training loop
@@ -263,7 +264,7 @@ if __name__ == "__main__":
                 if iter_num != 0:
                     log_dict["lr"] = lr
                     log_dict["mfu"] = running_mfu * 100
-                wandb.log(log_dict)
+                wandb.log(log_dict, global_step=iter_num)
             if (
                 losses["val"] < best_val_loss or cfg.always_save_checkpoint
             ) and master_process:
@@ -336,6 +337,13 @@ if __name__ == "__main__":
             print(
                 f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%"
             )
+            if cfg.wandb_log and master_process:
+                wandb.log(
+                    {
+                        "train/loss_iter": lossf,
+                    },
+                    global_step=iter_num,
+                )
         iter_num += 1
         local_iter_num += 1
 
