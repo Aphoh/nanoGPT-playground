@@ -23,6 +23,7 @@ import pickle
 from contextlib import nullcontext
 from omegaconf import OmegaConf
 
+from tqdm import tqdm
 import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
@@ -203,7 +204,7 @@ if __name__ == "__main__":
             ("val", make_iter(val_eval_loader, device)),
         ]:
             losses = torch.zeros(cfg.eval_iters)
-            for k, (X, Y) in zip(range(cfg.eval_iters), iter(loader)):
+            for k, (X, Y) in tqdm(zip(range(cfg.eval_iters), iter(loader))):
                 with ctx:
                     logits, loss = model(X, Y)
                 losses[k] = loss.item()
