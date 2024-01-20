@@ -1,1 +1,1 @@
-from .data import TextDataset, get_data_loaders, make_iter
+from .data import TextDataset, get_datasets, make_iter

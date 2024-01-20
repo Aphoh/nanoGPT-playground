@@ -29,7 +29,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
 from model import GPT
-from data import get_data_loaders, make_iter
+from data import get_datasets, make_iter
 from config import GPTConfig, Config, get_config
 
 if __name__ == "__main__":
@@ -96,20 +96,11 @@ if __name__ == "__main__":
 
     data_dir = os.path.join(cfg.data_dir, cfg.dataset)
 
-    train_loader, _ = get_data_loaders(
+    train_dataset, val_dataset = get_datasets(
         data_dir,
-        cfg.batch_size,
         cfg.gpt.block_size,
-        num_workers=cfg.num_workers,
     )
-    train_eval_loader, val_eval_loader = get_data_loaders(
-        data_dir,
-        cfg.batch_size,
-        cfg.gpt.block_size,
-        shuffle=False,
-        num_workers=cfg.num_workers,
-    )
-    train_iter = make_iter(train_loader, device)
+    train_iter = make_iter(train_dataset, cfg.batch_size, device)
 
     # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
     iter_num = 0
@@ -204,9 +195,11 @@ if __name__ == "__main__":
     def estimate_loss():
         out = {}
         model.eval()
+        train_eval_iter = make_iter(train_dataset, cfg.batch_size, device)
+        val_eval_iter = make_iter(val_dataset, cfg.batch_size, device)
         for split, loader in [
-            ("train", make_iter(train_eval_loader, device)),
-            ("val", make_iter(val_eval_loader, device)),
+            ("train", train_eval_iter),
+            ("val", val_eval_iter),
         ]:
             losses = torch.zeros(cfg.eval_iters)
             for k, (X, Y) in tqdm(zip(range(cfg.eval_iters), iter(loader))):
