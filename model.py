@@ -63,17 +63,24 @@ class BatchPemuteLinear(nn.Module):
     weights: list[torch.Tensor]
 
     def __init__(
-        self, n: int, b: int, device: torch.device = None, dtype: torch.dtype = None
+        self,
+        in_features: int,
+        out_features: int,
+        b: int,
+        n_stages: int = 2,
+        device: torch.device = None,
+        dtype: torch.dtype = None,
     ) -> None:
         super().__init__()
+        n = in_features
+        assert in_features % b == 0, "b must divide in_features"
+        assert out_features % b == 0, "b must divide out_features"
+        self.m1 = in_features // b
+        self.m2 = out_features // b
         assert n % b == 0, "b must divide n"
-        assert math.sqrt(n) == int(math.sqrt(n)), "n must be a perfect square"
-        assert b**2 / math.sqrt(n) >= 1, "b^2 must be >= sqrt(n)"
-        assert int(b**2) % int(math.sqrt(n)) == 0, "b^2 must be divisible by sqrt(n)"
         self.n = n
         self.b = b
-        self.m = n // b
-        self.num_stages = 2 * int(b**2) // int(math.sqrt(n))
+        self.n_stages = n_stages
         self.weights = nn.ParameterList(
             [
                 nn.Parameter(torch.empty(self.m, self.m, device=device, dtype=dtype))
@@ -81,9 +88,20 @@ class BatchPemuteLinear(nn.Module):
             ]
         )
 
-    def reset_parameters(self):
-        for i in range(self.num_stages):
-            nn.init.kaiming_uniform_(self.weights[i], a=math.sqrt(5))
+    def reset_parameters(self) -> None:
+        # Mimic init.kaiming_uniform: https://github.com/pytorch/pytorch/blob/24087d07ca7ffa244575d259711dd7c99245a67a/torch/nn/init.py#L360
+        for mat in self.weights:
+            fan_in = mat.shape[-1]
+            gain = torch.nn.init.calculate_gain(
+                nonlinearity="leaky_relu", param=math.sqrt(5)
+            )
+            std = gain / math.sqrt(fan_in)
+            bound = (
+                math.sqrt(3.0) * std
+            )  # Calculate uniform bounds from standard deviation
+            with torch.no_grad():
+                mat.uniform_(-bound, bound)
+        self.reset_parameters_bias()
 
     def forward(self, x):
         # input is (B, T, n)
