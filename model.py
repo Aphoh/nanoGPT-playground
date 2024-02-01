@@ -46,11 +46,12 @@ def block_linear_1(x, w1, w2, b: int = 8):
     w2: [k/b, k/b]
     outputs: [..., k]
     """
-    assert x.shape[-1] % int(b**2) == 0
-    xv = x.view(-1, b, x.shape[-1] // b)
+    n = x.shape[-1]
+    assert n % int(b**2) == 0
+    xv = x.view(-1, b, n // b)
     out1 = block_linear_1_step(xv, w1)
     out1 = block_linear_1_step(out1, w2)
-    return out1.view(x.shape[:-1] + (-1,))
+    return out1.reshape(x.shape[:-1] + (-1,))
 
 
 @torch.jit.script
@@ -106,8 +107,11 @@ class BlockLinear(nn.Module):
         assert (
             out_features % int(b**2) == 0
         ), f"(b={b})^2 must divide out_features={out_features}"
+        self.in_features = in_features
+        self.out_features = out_features
         self.m1 = in_features // b
         self.m2 = out_features // b
+        self.b = b
         kwargs = {"device": device, "dtype": dtype}
         self.w1 = nn.Parameter(torch.empty(self.m1, self.m2, **kwargs))
         self.w2 = nn.Parameter(torch.empty(self.m2, self.m2, **kwargs))
@@ -140,7 +144,7 @@ class BlockLinear(nn.Module):
         return x
 
     def extra_repr(self) -> str:
-        return f"n={self.n}, b={self.b}, m={self.m}, num_stages={self.num_stages}"
+        return f"in_features={self.in_features}, out_features={self.out_features}, b={self.b}"
 
 
 class CausalSelfAttention(nn.Module):
