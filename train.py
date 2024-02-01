@@ -287,8 +287,10 @@ if __name__ == "__main__":
                         "config": cfg,
                     }
                     print(f"saving checkpoint to {cfg.out_dir}")
+                    t0 = time.time()
                     ckpt_path = os.path.join(cfg.out_dir, "ckpt.pt")
                     torch.save(checkpoint, ckpt_path)
+                    print(f"saved checkpoint to {ckpt_path} in {time.time()-t0:.1f}s")
                     if (
                         cfg.wandb_log and iter_num == cfg.eval_interval
                     ):  # if this is the first eval, watch the checkpoint file

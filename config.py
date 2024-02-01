@@ -15,22 +15,11 @@ class GPTConfig:
     dropout: float = 0.0
     bias: bool = True  # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
 
-    block_linear: bool = (
-        False  # False: use Linear layers, like GPT-2. False: use BlockLinear layer
-    )
-    block_m: int = 8  # m dimension for block linear layer
-    block_k: int = 16  # k dimension for block linear layer
-    block_n: int = 32  # n dimension for block linear layer
-
-    bpl: bool = False  # use batch parallel linear layer
-    bpl_b: int = 8  # b dimension for batch parallel linear layer
+    block_linear: bool = False  # use block linear layer
+    bl_b: int = 8  # b dimension for block linear layer
 
     mlp_ratio: int = 4  # ratio of mlp middle hidden dimension to embedding dimension
     mlp_init_std: float = 0.02  # std dev of gaussian initialization for mlp weights
-
-    t_expand: int = 1  # expand the number of embedding outputs per token by this amount
-    t_expand_attn_mask: bool = True  # expand the attn mask to match the t_expand
-    t_expand_sep_lm_head: bool = True  # separate the lm head from embeddings
 
 
 @dataclass
@@ -92,9 +81,6 @@ def get_config() -> Config:
     cfg.data_dir = os.environ.get("DATA_DIR", cfg.data_dir)  # override from env var
     if cfg.min_lr == -1.0:
         cfg.min_lr = cfg.learning_rate / 10.0
-    assert not (
-        cfg.gpt.bpl and cfg.gpt.block_linear
-    ), "Can't use both bpl and block_linear"
     assert cfg.min_lr <= cfg.learning_rate, "min_lr must be <= learning_rate"
     OmegaConf.set_readonly(cfg, True)  # make read-only to avoid accidental overwrites
     print("Final config:", OmegaConf.to_yaml(cfg))
