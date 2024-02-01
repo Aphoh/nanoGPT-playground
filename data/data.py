@@ -1,7 +1,88 @@
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import os
 import torch
+import webdataset as wds
+
+
+class PreprocessFn:
+    def __init__(self, block_size: int):
+        self.block_size = block_size
+
+    def __call__(self, gen):
+        for sample in gen:
+            ids = np.frombuffer(sample["ids"], dtype=np.uint16).astype(int)
+            ids = torch.from_numpy(ids)
+            tokens_needed = self.block_size + 1
+            n_samples = len(ids) // tokens_needed
+            leftover_tokens = len(ids) - n_samples * tokens_needed
+            rand_shift = torch.randint(leftover_tokens, (1,)).item()
+            assert rand_shift + n_samples * tokens_needed <= len(ids)
+            for i in range(0, n_samples):
+                start = rand_shift + i * tokens_needed
+                x = ids[start : start + self.block_size]
+                y = ids[start + 1 : start + self.block_size + 1]
+                yield (x, y)
+
+
+def collation_fn(samples):
+    res = list(zip(*samples))
+    for i in range(len(res)):
+        res[i] = torch.stack(res[i])
+    return res
+
+
+def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool):
+    shards = "{0000..0038}" if split == "train" else "0000"
+    url = f"https://pub-789bee9ba3594c97bf43254a35f300f1.r2.dev/openwebtext/{split}/shard-{shards}.tar.gz"
+
+    def preprocess(gen):
+        for sample in gen:
+            ids = np.frombuffer(sample["ids"], dtype=np.uint16).astype(int)
+            ids = torch.from_numpy(ids)
+            print(sample["__key__"])
+            tokens_needed = block_size + 1
+            n_samples = len(ids) // tokens_needed
+            leftover_tokens = len(ids) - n_samples * tokens_needed
+            rand_shift = torch.randint(leftover_tokens, (1,)).item()
+            assert rand_shift + n_samples * tokens_needed <= len(ids)
+            for i in range(0, n_samples):
+                start = rand_shift + i * tokens_needed
+                x = ids[start : start + block_size]
+                y = ids[start + 1 : start + block_size + 1]
+                yield (x, y)
+
+    pipeline = (
+        [wds.SimpleShardList(url)]
+        + [wds.split_by_worker]
+        + ([wds.shuffle(10)] if shuffle else [])
+        + [wds.tarfile_to_samples(), PreprocessFn(block_size)]
+        + ([wds.shuffle(bufsize=10000, initial=5000)] if shuffle else [])
+        + [wds.batched(batch_size, collation_fn=collation_fn)]
+    )
+
+    dataset = wds.DataPipeline(*pipeline)
+    return dataset
+
+
+def get_owt_iter(
+    split: str,
+    batch_size: int,
+    block_size: int,
+    shuffle: bool,
+    device: torch.device,
+    num_workers: int = 8,
+):
+    dataset = get_owt_dataset(split, batch_size, block_size, shuffle)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=None,
+        num_workers=num_workers,
+        pin_memory=device.type == "cuda",
+    )
+    while True:
+        for batch in dataloader:
+            yield [x.to(device, non_blocking=True) for x in batch]
 
 
 class TextDataset(Dataset):

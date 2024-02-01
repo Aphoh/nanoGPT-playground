@@ -3,9 +3,11 @@
 
 import os
 from tqdm import tqdm
+import uuid
 import numpy as np
 import tiktoken
 from datasets import load_dataset  # huggingface datasets
+import webdataset as wds
 
 # number of workers in .map() call
 # good number to use is ~order number of cpu cores // 2
@@ -59,25 +61,29 @@ if __name__ == "__main__":
         num_proc=num_proc,
     )
 
-    # concatenate all the ids in each dataset into one large file we can use for training
     for split, dset in tokenized.items():
         arr_len = np.sum(dset["len"], dtype=np.uint64)
-        filename = os.path.join(os.path.dirname(__file__), f"{split}.bin")
         dtype = np.uint16  # (can do since enc.max_token_value == 50256 is < 2**16)
-        arr = np.memmap(filename, dtype=dtype, mode="w+", shape=(arr_len,))
         total_batches = 1024
-
-        idx = 0
-        for batch_idx in tqdm(range(total_batches), desc=f"writing {filename}"):
-            # Batch together samples for faster write
-            batch = dset.shard(
-                num_shards=total_batches, index=batch_idx, contiguous=True
-            ).with_format("numpy")
-            arr_batch = np.concatenate(batch["ids"])
-            # Write into mmap
-            arr[idx : idx + len(arr_batch)] = arr_batch
-            idx += len(arr_batch)
-        arr.flush()
+        elem_length = 8192
+        shard_dir = os.path.join(os.path.dirname(__file__), split)
+        os.makedirs(shard_dir, exist_ok=True)
+        pattern = os.path.join(shard_dir, "shard-%04d.tar.gz")
+        with wds.ShardWriter(pattern, maxcount=30000, maxsize=5e8) as writer:
+            for batch_idx in tqdm(range(total_batches), desc=f"writing {pattern}"):
+                # Batch together samples for faster write
+                batch = dset.shard(
+                    num_shards=total_batches, index=batch_idx, contiguous=True
+                ).with_format("numpy")
+                arr_batch = np.concatenate(batch["ids"]).astype(dtype)
+                for idx in range(0, len(arr_batch) - elem_length, elem_length):
+                    key = uuid.uuid4().hex
+                    writer.write(
+                        {
+                            "__key__": key,
+                            "ids": arr_batch[idx : idx + elem_length].tobytes(),
+                        }
+                    )
 
     # train.bin is ~17GB, val.bin ~8.5MB
     # train has ~9B tokens (9,035,582,198)
