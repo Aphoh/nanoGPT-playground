@@ -7,8 +7,9 @@ wandb_project: "nanoGPT-playground"
 
 # these make the total batch size be ~0.5M
 # 240 batch size * 256 block size * 8 gradaccum = 491,520
-batch_size: 240
-gradient_accumulation_steps: 8
+batch_size: 1920
+micro_batch_size: 240
+
 gpt:
   block_size: 256
   n_layer: 6

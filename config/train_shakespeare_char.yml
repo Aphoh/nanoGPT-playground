@@ -11,8 +11,8 @@ always_save_checkpoint: False
 
 wandb_log: False # override via command line if you like
 dataset: "shakespeare_char"
-gradient_accumulation_steps: 1
 batch_size: 64
+micro_batch_size: 64
 # baby GPT model :)
 gpt:
   vocab_size: 65

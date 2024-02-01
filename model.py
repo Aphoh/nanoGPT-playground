@@ -152,9 +152,11 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        args = {"b": config.bl_b} if config.block_linear else {}
+        LinCls = BlockLinear if config.block_linear else nn.Linear
+        self.c_attn = LinCls(config.n_embd, 3 * config.n_embd, bias=config.bias, **args)
         # output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj = LinCls(config.n_embd, config.n_embd, bias=config.bias, **args)
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
@@ -162,53 +164,31 @@ class CausalSelfAttention(nn.Module):
         self.n_embd = config.n_embd
         self.dropout = config.dropout
         # flash attention make GPU go brrrrr but support is only in PyTorch >= 2.0
-        self.dao_flash = False
-        if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8:
-            try:
-                import flash_attn
-
-                self.flash = flash_attn.flash_attn_qkvpacked_func
-                print("Using dao flash attention")
-                self.dao_flash = True
-            except Exception:
-                print("Unable to load flash-attn.")
-        else:
-            print("Device does not support DAO flash-attn")
 
     def forward(self, x):
         # batch, sequence, n_embd
         B, T, C = x.shape
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        qkv = self.c_attn(x)  # shape (B, T, 3 * n_embd)
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        # (B, nh, T, hs)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
 
-        if self.dao_flash:
-            y = self.flash(
-                qkv.view(B, T, 3, self.n_head, C // self.n_head),
-                causal=True,
-                dropout_p=self.dropout if self.training else 0.0,
-            )
-            y = y.view(B, T, C)
-        else:
-            q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-            # (B, nh, T, hs)
-            k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-            # (B, nh, T, hs)
-            q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-            # (B, nh, T, hs)
-            v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-
-            # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(
-                q,
-                k,
-                v,
-                dropout_p=self.dropout if self.training else 0,
-                is_causal=True,
-            )
-            y = (
-                y.transpose(1, 2).contiguous().view(B, T, C)
-            )  # re-assemble all head outputs side by side
+        # efficient attention using Flash Attention CUDA kernels
+        y = torch.nn.functional.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            dropout_p=self.dropout if self.training else 0,
+            is_causal=True,
+        )
+        y = (
+            y.transpose(1, 2).contiguous().view(B, T, C)
+        )  # re-assemble all head outputs side by side
 
         # output projection
         y = self.resid_dropout(self.c_proj(y))
@@ -248,6 +228,8 @@ class Block(nn.Module):
 
 
 class GPT(nn.Module):
+    config: GPTConfig
+
     def __init__(self, config: GPTConfig):
         super().__init__()
         self.config = config

@@ -6,6 +6,8 @@ wandb_log: True
 wandb_project: "nanoGPT-playground"
 
 batch_size: 256
+micro_batch_size: 256
+
 gpt:
   block_size: 96
   n_layer: 6
@@ -15,7 +17,6 @@ gpt:
   dropout: 0.01
   bias: True
 
-gradient_accumulation_steps: 1
 dataset: math-next
 
 # this makes total number of tokens be 300B

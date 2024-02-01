@@ -54,7 +54,7 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
 
     pipeline = (
         [wds.SimpleShardList(url)]
-        + [wds.split_by_worker]
+        + [wds.split_by_worker, wds.split_by_node]
         + ([wds.shuffle(10)] if shuffle else [])
         + [wds.tarfile_to_samples(), PreprocessFn(block_size)]
         + ([wds.shuffle(bufsize=10000, initial=5000)] if shuffle else [])

@@ -29,6 +29,8 @@ class Config:
     # I/O
     gpt: GPTConfig = field(default_factory=GPTConfig)
 
+    devices: int = 1  # only used in train_fabric.py
+
     out_dir: str = "out"
     data_dir: str = "data"
     eval_interval: int = 2000
