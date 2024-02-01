@@ -42,9 +42,9 @@ class Config:
     dataset: str = "openwebtext"
     num_workers: int = 0
 
-    gradient_accumulation_steps: int = 5 * 8  # used to simulate larger batch sizes
-    # if gradient_accumulation_steps > 1, this is the micro-batch size
-    batch_size: int = 12
+    batch_size: int = 480
+    micro_batch_size: int = 12
+
     learning_rate: float = 6e-4  # max learning rate
     max_iters: int = 600000  # total number of training iterations
     weight_decay: float = 1e-1
@@ -82,6 +82,11 @@ def get_config() -> Config:
     if cfg.min_lr == -1.0:
         cfg.min_lr = cfg.learning_rate / 10.0
     assert cfg.min_lr <= cfg.learning_rate, "min_lr must be <= learning_rate"
+
+    assert (
+        cfg.batch_size % cfg.micro_batch_size == 0
+    ), "batch_size must be divisible by micro_batch_size"
+
     OmegaConf.set_readonly(cfg, True)  # make read-only to avoid accidental overwrites
     print("Final config:", OmegaConf.to_yaml(cfg))
     return cfg

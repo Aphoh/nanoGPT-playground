@@ -37,7 +37,7 @@ if __name__ == "__main__":
 
     # various inits, derived attributes, I/O setup
     ddp = int(os.environ.get("RANK", -1)) != -1  # is this a ddp run?
-    gradient_accumulation_steps = cfg.gradient_accumulation_steps
+    gradient_accumulation_steps = cfg.batch_size // cfg.micro_batch_size
     device = cfg.device
     if ddp:
         init_process_group(backend=cfg.backend)
@@ -52,8 +52,8 @@ if __name__ == "__main__":
         seed_offset = ddp_rank  # each process gets a different seed
         # world_size number of processes will be training simultaneously, so we can scale
         # down the desired gradient accumulation iterations per process proportionally
-        assert cfg.gradient_accumulation_steps % ddp_world_size == 0
-        gradient_accumulation_steps = cfg.gradient_accumulation_steps // ddp_world_size
+        assert gradient_accumulation_steps % ddp_world_size == 0
+        gradient_accumulation_steps //= ddp_world_size
     else:
         # if not ddp, we are running on a single gpu, and one process
         master_process = True
