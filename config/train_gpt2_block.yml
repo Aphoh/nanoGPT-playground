@@ -6,3 +6,9 @@ devices: 4
 nodes: 4
 device: cuda
 dtype: bfloat16
+
+eval_interval: 1600
+
+gpt:
+  block_linear: True
+  bl_b: 8

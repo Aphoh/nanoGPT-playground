@@ -137,6 +137,8 @@ def main(config: Config) -> None:
     model_checkpoint = ModelCheckpoint(
         monitor="val_loss",
         save_top_k=1,
+        save_last=True,
+        every_n_train_steps=config.eval_interval,
         dirpath=config.out_dir,
         verbose=True,
     )
