@@ -121,7 +121,9 @@ def main(config: Config) -> None:
         dirpath=config.out_dir,
         verbose=True,
     )
-    gradient_accumulation_steps = config.batch_size // config.micro_batch_size
+    gradient_accumulation_steps = config.batch_size // (
+        config.micro_batch_size * config.devices * config.nodes
+    )
     trainer = L.Trainer(
         accelerator="cpu" if config.device == "cpu" else "auto",
         devices=config.devices,
@@ -163,7 +165,6 @@ def main(config: Config) -> None:
     args = {
         "batch_size": None,
         "num_workers": config.num_workers,
-        "pin_memory": config.device == "cuda",
     }
     train_dataloader = DataLoader(train_data, **args)
     val_dataloader = DataLoader(val_data, **args)
