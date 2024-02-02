@@ -29,7 +29,8 @@ class Config:
     # I/O
     gpt: GPTConfig = field(default_factory=GPTConfig)
 
-    devices: int = 1  # only used in train_fabric.py
+    devices: int = 1  # only used in lightning
+    nodes: int = 1  # only used in lightning
 
     out_dir: str = "out"
     data_dir: str = "data"

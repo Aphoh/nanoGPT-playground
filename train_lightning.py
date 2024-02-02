@@ -10,7 +10,6 @@ import torch
 from lightning.fabric.utilities import measure_flops
 from lightning.pytorch.callbacks import ModelCheckpoint, ThroughputMonitor
 from lightning.pytorch.loggers import WandbLogger
-from lightning.pytorch.strategies import DDPStrategy
 from torch.utils.data import DataLoader
 
 from config import Config, get_config
@@ -107,14 +106,6 @@ class LightningGPTModule(L.LightningModule):
 def main(config: Config) -> None:
     precision = "bf16-mixed" if config.dtype == "bfloat16" else "16-mixed"
 
-    if config.devices > 1:
-        strategy = DDPStrategy(
-            accelerator="gpu",
-            precision=precision,
-        )
-    else:
-        strategy = "auto"
-
     logger = WandbLogger(
         offline=not config.wandb_log,
         project=config.wandb_project,
@@ -133,7 +124,8 @@ def main(config: Config) -> None:
     trainer = L.Trainer(
         accelerator="cpu" if config.device == "cpu" else "auto",
         devices=config.devices,
-        strategy=strategy,
+        num_nodes=config.nodes,
+        strategy="ddp" if config.devices > 1 else None,
         precision=precision,
         logger=logger,
         callbacks=[throughput, model_checkpoint],
