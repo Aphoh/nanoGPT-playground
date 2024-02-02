@@ -72,7 +72,7 @@ class LightningGPTModule(L.LightningModule):
             )
             num_weights = self.module.get_num_params(non_embedding=True)
             flops_per_token = self.flops_per_batch / (
-                self.config.gpt.block_size * self.config.gpt.micro_batch_size
+                self.config.gpt.block_size * self.config.micro_batch_size
             )
             flops_per_token_per_weight = flops_per_token / num_weights
             self.logger.experiment.config.update(
@@ -149,7 +149,7 @@ def main(config: Config) -> None:
         accelerator="cpu" if config.device == "cpu" else "auto",
         devices=config.devices,
         num_nodes=config.nodes,
-        strategy="ddp" if config.devices > 1 else None,
+        strategy="ddp" if config.devices > 1 else "auto",
         precision=precision,
         logger=logger,
         callbacks=[throughput, model_checkpoint],
