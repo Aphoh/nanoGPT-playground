@@ -3,7 +3,6 @@
 import math
 import time
 from typing import Any, Dict, Mapping, Optional
-import wandb
 
 from pathlib import Path
 import lightning as L
@@ -76,8 +75,8 @@ class LightningGPTModule(L.LightningModule):
                 self.config.gpt.block_size * self.config.micro_batch_size
             )
             flops_per_token_per_weight = flops_per_token / num_weights
-            if self.config.wandb_log:
-                wandb.config.update(
+            if self.global_rank == 0:
+                self.logger.experiment.config.update(
                     {
                         "num_weights": num_weights,
                         "flops_per_token": flops_per_token,
@@ -128,9 +127,6 @@ def main(config: Config) -> None:
         log_model=config.wandb_log,
     )
 
-    if config.wandb_log:
-        wandb.config.update(OmegaConf.to_container(cfg))
-
     throughput = ThroughputMonitor(
         batch_size_fn=lambda batch: batch[0].size(0),
     )
@@ -167,6 +163,9 @@ def main(config: Config) -> None:
         val_check_interval=config.eval_interval,
         plugins=[SLURMEnvironment()] if config.nodes > 1 else [],
     )
+
+    if trainer.global_rank == 0:
+        logger.experiment.config.update(OmegaConf.to_container(cfg))
 
     L.seed_everything(
         1337, workers=True
