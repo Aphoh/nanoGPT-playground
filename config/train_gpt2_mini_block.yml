@@ -21,11 +21,7 @@ gpt:
   dropout: 0.0
   # block linear stuff
   block_linear: True
-  bias: False
-  mlp_ratio: 4
-  block_m: 8
-  block_n: 32
-  block_k: 16
+  bl_b: 8
 
 learning_rate: 6e-4
 max_iters: 100000

@@ -62,7 +62,7 @@ if __name__ == "__main__":
     tokens_per_iter = (
         gradient_accumulation_steps
         * ddp_world_size
-        * cfg.batch_size
+        * cfg.micro_batch_size
         * cfg.gpt.block_size
     )
 
@@ -99,18 +99,23 @@ if __name__ == "__main__":
     train_iter, val_iter = None, None
     if cfg.dataset == "openwebtext":
         train_iter = get_owt_iter(
-            "train", cfg.batch_size, cfg.gpt.block_size, True, device, cfg.num_workers
+            "train",
+            cfg.micro_batch_size,
+            cfg.gpt.block_size,
+            True,
+            device,
+            cfg.num_workers,
         )
         val_iter = get_owt_iter(
-            "val", cfg.batch_size, cfg.gpt.block_size, False, device, 1
+            "val", cfg.micro_batch_size, cfg.gpt.block_size, False, device, 1
         )
     else:
         train_dataset, val_dataset = get_datasets(
             data_dir,
             cfg.gpt.block_size,
         )
-        train_iter = make_iter(train_dataset, cfg.batch_size, device)
-        val_iter = make_iter(train_dataset, cfg.batch_size, device)
+        train_iter = make_iter(train_dataset, cfg.micro_batch_size, device)
+        val_iter = make_iter(train_dataset, cfg.micro_batch_size, device)
 
     # init these up here, can override if init_from='resume' (i.e. from a checkpoint)
     iter_num = 0
@@ -339,7 +344,7 @@ if __name__ == "__main__":
             lossf = loss.item() * gradient_accumulation_steps
             if local_iter_num >= 5:  # let the training loop settle a bit
                 mfu = raw_model.estimate_mfu(
-                    cfg.batch_size * gradient_accumulation_steps, dt
+                    cfg.micro_batch_size * gradient_accumulation_steps, dt
                 )
                 running_mfu = (
                     mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
