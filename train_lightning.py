@@ -12,6 +12,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint, ThroughputMonitor
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.plugins.environments import SLURMEnvironment
 from torch.utils.data import DataLoader
+from omegaconf import OmegaConf
 
 from config import Config, get_config
 from model import GPT
@@ -69,6 +70,18 @@ class LightningGPTModule(L.LightningModule):
             self.print(
                 f"Measured TFLOPs: {self.flops_per_batch * trainer.world_size / 1e12:.2f}"
             )
+            num_weights = self.module.get_num_params(non_embedding=True)
+            flops_per_token = self.flops_per_batch / (
+                self.config.gpt.block_size * self.config.gpt.micro_batch_size
+            )
+            flops_per_token_per_weight = flops_per_token / num_weights
+            self.logger.experiment.config.update(
+                {
+                    "num_weights": num_weights,
+                    "flops_per_token": flops_per_token,
+                    "flops_per_token_per_weight": flops_per_token_per_weight,
+                }
+            )
 
     def on_train_batch_start(self, batch: Any, batch_idx: int) -> None:
         if not self.config.decay_lr:
@@ -112,6 +125,8 @@ def main(config: Config) -> None:
         project=config.wandb_project,
         log_model=config.wandb_log,
     )
+
+    logger.experiment.config.update(OmegaConf.to_container(cfg))
     throughput = ThroughputMonitor(
         batch_size_fn=lambda batch: batch[0].size(0),
     )
@@ -124,6 +139,12 @@ def main(config: Config) -> None:
     gradient_accumulation_steps = config.batch_size // (
         config.micro_batch_size * config.devices * config.nodes
     )
+    log_every_n_steps = config.log_interval
+    if gradient_accumulation_steps % config.log_interval != 0:
+        log_every_n_steps = (
+            gradient_accumulation_steps  # weird thing in throughput monitor
+        )
+
     trainer = L.Trainer(
         accelerator="cpu" if config.device == "cpu" else "auto",
         devices=config.devices,
@@ -136,7 +157,7 @@ def main(config: Config) -> None:
         max_epochs=1,
         limit_val_batches=config.eval_iters,
         accumulate_grad_batches=gradient_accumulation_steps,
-        log_every_n_steps=config.log_interval * gradient_accumulation_steps,
+        log_every_n_steps=log_every_n_steps,
         val_check_interval=config.eval_interval,
         plugins=[SLURMEnvironment()] if config.nodes > 1 else [],
     )
