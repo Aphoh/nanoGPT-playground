@@ -34,7 +34,7 @@ def collation_fn(samples):
 
 def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool):
     shards = "{0000..0036}" if split == "train" else "0000"
-    url = f"https://pub-789bee9ba3594c97bf43254a35f300f1.r2.dev/openwebtext/{split}/shard-{shards}.tar.gz"
+    url = f"https://r2.aphoh.us/openwebtext/{split}/shard-{shards}.tar.gz"
 
     pipeline = (
         [wds.SimpleShardList(url)]

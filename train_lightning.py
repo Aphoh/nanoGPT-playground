@@ -6,9 +6,9 @@ from typing import Any, Dict, Mapping, Optional
 
 from pathlib import Path
 import lightning as L
+import wandb
 import torch
-from lightning.fabric.utilities import measure_flops
-from lightning.pytorch.callbacks import ModelCheckpoint, ThroughputMonitor
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.plugins.environments import SLURMEnvironment
 from torch.utils.data import DataLoader
@@ -25,8 +25,7 @@ class LightningGPTModule(L.LightningModule):
     def __init__(self, config: Config) -> None:
         super().__init__()
         self.config = config
-        self.module: Optional[torch.nn.Module] = None
-        self.flops_per_batch: Optional[int] = None
+        self.module: Optional[GPT] = None
 
     def configure_model(self) -> None:
         self.module = GPT(self.config.gpt)
@@ -50,37 +49,22 @@ class LightningGPTModule(L.LightningModule):
         trainer = self.trainer
         with torch.device("meta"):
             meta_model = GPT(self.module.config)
-            # "estimated" is not as precise as "measured". Estimated is optimistic but widely used in the wild.
-            # When comparing MFU or FLOP numbers with other projects that use estimated FLOPs,
-            # consider setting `self.flops_per_batch = estimated_flops` instead
-            estimated_flops = (
+            fpt = (
                 meta_model.estimate_flops_per_token()
                 * self.config.gpt.block_size
                 * self.config.micro_batch_size
             )
             self.print(
-                f"Estimated TFLOPs: {estimated_flops * trainer.world_size / 1e12:.2f}"
-            )
-            x = torch.randint(
-                0, 1, (self.config.micro_batch_size, self.config.gpt.block_size)
-            )
-            forward_fn = lambda: meta_model(x, targets=x)
-            loss_fn = lambda y: y[1]
-            self.flops_per_batch = measure_flops(meta_model, forward_fn, loss_fn)
-            self.print(
-                f"Measured TFLOPs: {self.flops_per_batch * trainer.world_size / 1e12:.2f}"
+                f"Estimated GFLOPs per token: {fpt * trainer.world_size / 1e9:.2f}"
             )
             num_weights = self.module.get_num_params(non_embedding=True)
-            flops_per_token = self.flops_per_batch / (
-                self.config.gpt.block_size * self.config.micro_batch_size
-            )
-            flops_per_token_per_weight = flops_per_token / num_weights
-            if self.global_rank == 0:
-                self.logger.experiment.config.update(
+            fpt_pw = fpt / num_weights
+            if self.global_rank == 0 and self.config.wandb_log:
+                wandb.config.update(
                     {
                         "num_weights": num_weights,
-                        "flops_per_token": flops_per_token,
-                        "flops_per_token_per_weight": flops_per_token_per_weight,
+                        "flops_per_token": fpt,
+                        "flops_per_token_per_weight": fpt_pw,
                     }
                 )
 
@@ -99,13 +83,27 @@ class LightningGPTModule(L.LightningModule):
     def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
         input_ids, targets = batch
         logits, loss = self.module(input_ids, targets=targets)
-        self.log("train_loss", loss, on_step=True, on_epoch=False, prog_bar=True)
+        self.log(
+            "train_loss",
+            loss,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=True,
+            sync_dist=self.config.devices > 1,
+        )
         return loss
 
     def validation_step(self, batch: Any, batch_idx: int) -> None:
         input_ids, targets = batch
         logits, loss = self.module(input_ids, targets=targets)
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log(
+            "val_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=self.config.devices > 1,
+        )
 
     def state_dict(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         if self.module is None:
@@ -127,9 +125,6 @@ def main(config: Config) -> None:
         log_model=config.wandb_log,
     )
 
-    throughput = ThroughputMonitor(
-        batch_size_fn=lambda batch: batch[0].size(0),
-    )
     model_checkpoint = ModelCheckpoint(
         monitor="val_loss",
         save_top_k=1,
@@ -141,11 +136,6 @@ def main(config: Config) -> None:
     gradient_accumulation_steps = config.batch_size // (
         config.micro_batch_size * config.devices * config.nodes
     )
-    log_every_n_steps = config.log_interval
-    if gradient_accumulation_steps % config.log_interval != 0:
-        log_every_n_steps = (
-            gradient_accumulation_steps  # weird thing in throughput monitor
-        )
 
     trainer = L.Trainer(
         accelerator="cpu" if config.device == "cpu" else "auto",
@@ -154,17 +144,17 @@ def main(config: Config) -> None:
         strategy="ddp" if config.devices > 1 else "auto",
         precision=precision,
         logger=logger,
-        callbacks=[throughput, model_checkpoint],
+        callbacks=[model_checkpoint],
         max_steps=config.max_iters,
         max_epochs=1,
         limit_val_batches=config.eval_iters,
         accumulate_grad_batches=gradient_accumulation_steps,
-        log_every_n_steps=log_every_n_steps,
+        log_every_n_steps=config.log_interval,
         val_check_interval=config.eval_interval,
         plugins=[SLURMEnvironment()] if config.nodes > 1 else [],
     )
 
-    if trainer.global_rank == 0:
+    if trainer.global_rank == 0 and config.wandb_log:
         logger.experiment.config.update(OmegaConf.to_container(cfg))
 
     L.seed_everything(
@@ -178,6 +168,11 @@ def main(config: Config) -> None:
 
     t0 = time.perf_counter()
     model = LightningGPTModule(config)
+    if config.compile:
+        trainer.print("Compiling model...")
+        model = torch.compile(model)
+        trainer.print("Model compiled!")
+
     trainer.print(
         f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds."
     )
@@ -192,8 +187,8 @@ def main(config: Config) -> None:
         "batch_size": None,
         "num_workers": config.num_workers,
     }
-    train_dataloader = DataLoader(train_data, **args)
-    val_dataloader = DataLoader(val_data, **args)
+    train_dataloader = DataLoader(train_data, shuffle=False, **args)
+    val_dataloader = DataLoader(val_data, shuffle=False, **args)
 
     t0 = time.perf_counter()
     trainer.fit(model, train_dataloader, val_dataloader, ckpt_path="last")
