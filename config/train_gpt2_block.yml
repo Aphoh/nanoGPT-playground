@@ -1,0 +1,8 @@
+log_interval: 10
+wandb_log: True
+num_workers: 4
+wandb_project: gpt2-block
+devices: 4
+nodes: 4
+device: cuda
+dtype: bfloat16

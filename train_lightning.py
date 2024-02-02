@@ -10,6 +10,7 @@ import torch
 from lightning.fabric.utilities import measure_flops
 from lightning.pytorch.callbacks import ModelCheckpoint, ThroughputMonitor
 from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.plugins.environments import SLURMEnvironment
 from torch.utils.data import DataLoader
 
 from config import Config, get_config
@@ -133,9 +134,9 @@ def main(config: Config) -> None:
         max_epochs=1,
         limit_val_batches=config.eval_iters,
         accumulate_grad_batches=gradient_accumulation_steps,
-        # log_every_n_steps=config.log_interval,
-        log_every_n_steps=1,
+        log_every_n_steps=config.log_interval * gradient_accumulation_steps,
         val_check_interval=config.eval_interval,
+        plugins=[SLURMEnvironment()] if config.nodes > 1 else [],
     )
 
     L.seed_everything(
@@ -159,8 +160,13 @@ def main(config: Config) -> None:
     val_data = get_owt_dataset(
         "val", config.micro_batch_size, config.gpt.block_size, shuffle=True
     )
-    train_dataloader = DataLoader(train_data, batch_size=None, num_workers=2)
-    val_dataloader = DataLoader(val_data, batch_size=None, num_workers=2)
+    args = {
+        "batch_size": None,
+        "num_workers": config.num_workers,
+        "pin_memory": config.device == "cuda",
+    }
+    train_dataloader = DataLoader(train_data, **args)
+    val_dataloader = DataLoader(val_data, **args)
 
     t0 = time.perf_counter()
     trainer.fit(model, train_dataloader, val_dataloader, ckpt_path="last")

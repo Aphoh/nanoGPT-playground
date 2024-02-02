@@ -36,22 +36,6 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
     shards = "{0000..0038}" if split == "train" else "0000"
     url = f"https://pub-789bee9ba3594c97bf43254a35f300f1.r2.dev/openwebtext/{split}/shard-{shards}.tar.gz"
 
-    def preprocess(gen):
-        for sample in gen:
-            ids = np.frombuffer(sample["ids"], dtype=np.uint16).astype(int)
-            ids = torch.from_numpy(ids)
-            print(sample["__key__"])
-            tokens_needed = block_size + 1
-            n_samples = len(ids) // tokens_needed
-            leftover_tokens = len(ids) - n_samples * tokens_needed
-            rand_shift = torch.randint(leftover_tokens, (1,)).item()
-            assert rand_shift + n_samples * tokens_needed <= len(ids)
-            for i in range(0, n_samples):
-                start = rand_shift + i * tokens_needed
-                x = ids[start : start + block_size]
-                y = ids[start + 1 : start + block_size + 1]
-                yield (x, y)
-
     pipeline = (
         [wds.SimpleShardList(url)]
         + [wds.split_by_worker, wds.split_by_node]
