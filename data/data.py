@@ -43,9 +43,8 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
         + [
             wds.tarfile_to_samples(),
             PreprocessFn(block_size),
-            wds.repeatedly,
         ]
-        + ([wds.shuffle(bufsize=10000, initial=5000)] if shuffle else [])
+        + ([wds.shuffle(bufsize=10000, initial=1000)] if shuffle else [])
         + [wds.batched(batch_size, collation_fn=collation_fn)]
     )
 
