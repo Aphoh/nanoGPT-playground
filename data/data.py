@@ -41,7 +41,9 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
         + [wds.split_by_worker, wds.split_by_node]
         + ([wds.shuffle(10)] if shuffle else [])
         + [
-            wds.tarfile_to_samples(),
+            wds.tarfile_to_samples(
+                handler=lambda exn: print(f"WDS Exception: {exn}, continuing")
+            ),
             PreprocessFn(block_size),
         ]
         + ([wds.shuffle(bufsize=10000, initial=1000)] if shuffle else [])
