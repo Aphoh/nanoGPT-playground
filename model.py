@@ -60,9 +60,10 @@ def block_linear_2_step(x, w):
     w: [m, k*m]
     """
     batch, b, m = x.shape
+    assert m % b == 0, f"m={m} must be divisible by b={b}"
     out1 = x.matmul(w)
     out1 = out1.view((batch, b, m // b, b)).transpose(-3, -1)
-    return out1.reshape(x.shape)
+    return out1.reshape(x.shape[:1] + (w.shape[1],))
 
 
 @torch.jit.script
@@ -113,8 +114,12 @@ class BlockLinear(nn.Module):
         self.m2 = out_features // b
         self.b = b
         kwargs = {"device": device, "dtype": dtype}
-        self.w1 = nn.Parameter(torch.empty(self.m1, self.m2, **kwargs))
-        self.w2 = nn.Parameter(torch.empty(self.m2, self.m2, **kwargs))
+        if self.in_features < self.out_features:
+            self.w1 = nn.Parameter(torch.empty(self.m1, self.m2, **kwargs))
+            self.w2 = nn.Parameter(torch.empty(self.m2, self.m2, **kwargs))
+        else:
+            self.w1 = nn.Parameter(torch.empty(self.m1, self.m1, **kwargs))
+            self.w2 = nn.Parameter(torch.empty(self.m1, self.m2, **kwargs))
         self.block_linear = block_linear_1 if version == 1 else block_linear_2
         if bias:
             self.bias = nn.Parameter(torch.empty(out_features, **kwargs))

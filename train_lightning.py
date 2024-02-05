@@ -137,16 +137,17 @@ def main(config: Config) -> None:
         log_model=config.wandb_log,
     )
 
+    gradient_accumulation_steps = config.batch_size // (
+        config.micro_batch_size * config.devices * config.nodes
+    )
+
     model_checkpoint = ModelCheckpoint(
         monitor="val_loss",
         save_top_k=1,
         save_last=True,
-        every_n_train_steps=config.eval_interval,
+        every_n_train_steps=gradient_accumulation_steps * config.eval_interval,
         dirpath=config.out_dir,
         verbose=True,
-    )
-    gradient_accumulation_steps = config.batch_size // (
-        config.micro_batch_size * config.devices * config.nodes
     )
 
     trainer = L.Trainer(
