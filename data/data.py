@@ -59,7 +59,7 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
     dataset = (
         wds.DataPipeline(*pipeline)
         .repeat(2)
-        .with_epoch(n_batches=n_batches)
+        .with_epoch(nbatches=n_batches)
         .with_length(n_batches)
     )
     return dataset
