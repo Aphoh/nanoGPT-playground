@@ -31,8 +31,10 @@ class LightningGPTModule(L.LightningModule):
         self.module = GPT(self.config.gpt)
         self.module.apply(self.module._init_weights)
         if self.config.compile:
+            self.print("Compiling model...")
             self.orig_mod = self.module
             self.module = torch.compile(self.module)
+            self.print("Model compiled!")
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         if self.module is None:
@@ -178,10 +180,6 @@ def main(config: Config) -> None:
 
     t0 = time.perf_counter()
     model = LightningGPTModule(config)
-    if config.compile:
-        trainer.print("Compiling model...")
-        model = torch.compile(model)
-        trainer.print("Model compiled!")
 
     trainer.print(
         f"Time to instantiate model: {time.perf_counter() - t0:.02f} seconds."
