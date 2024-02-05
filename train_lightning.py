@@ -93,7 +93,7 @@ class LightningGPTModule(L.LightningModule):
             on_step=True,
             on_epoch=False,
             prog_bar=True,
-            sync_dist=self.config.devices > 1,  # maybe disable
+            # sync_dist=self.config.devices > 1,  # maybe disable
         )
         return loss
 
@@ -106,7 +106,7 @@ class LightningGPTModule(L.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            sync_dist=self.config.devices > 1,
+            # sync_dist=self.config.devices > 1,
         )
 
     def state_dict(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
