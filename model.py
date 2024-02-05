@@ -59,10 +59,11 @@ def block_linear_2_step(x, w):
     x: [batch, b, m]
     w: [m, k*m]
     """
-    batch, b, m = x.shape
-    assert m % b == 0, f"m={m} must be divisible by b={b}"
+    batch, b, _ = x.shape
+    _, m2 = w.shape
+    assert m2 % b == 0, f"w.shape[1]={m2} must be divisible by b={b}"
     out1 = x.matmul(w)
-    out1 = out1.view((batch, b, m // b, b)).transpose(-3, -1)
+    out1 = out1.view((batch, b, m2 // b, b)).transpose(-3, -1)
     return out1.reshape(x.shape[:1] + (w.shape[1],))
 
 
