@@ -8,8 +8,6 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 """
 
 import math
-import inspect
-
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -96,6 +94,7 @@ class BlockLinear(nn.Module):
         in_features: int,
         out_features: int,
         b: int,
+        version: int = 1,
         bias: bool = False,
         device: torch.device = None,
         dtype: torch.dtype = None,
@@ -115,6 +114,7 @@ class BlockLinear(nn.Module):
         kwargs = {"device": device, "dtype": dtype}
         self.w1 = nn.Parameter(torch.empty(self.m1, self.m2, **kwargs))
         self.w2 = nn.Parameter(torch.empty(self.m2, self.m2, **kwargs))
+        self.block_linear = block_linear_1 if version == 1 else block_linear_2
         if bias:
             self.bias = nn.Parameter(torch.empty(out_features, **kwargs))
         else:
@@ -138,7 +138,7 @@ class BlockLinear(nn.Module):
             torch.nn.init.zeros_(self.bias)
 
     def forward(self, x):
-        x = block_linear_1(x, self.w1, self.w2, b=self.b)
+        x = self.block_linear(x, self.w1, self.w2, b=self.b)
         if self.bias is not None:
             x = x + self.bias
         return x
@@ -152,8 +152,14 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        args = {"b": config.bl_b} if config.block_linear else {}
-        LinCls = BlockLinear if config.block_linear else nn.Linear
+        args = (
+            {"b": config.bl_b, "version": config.bl_version}
+            if config.block_linear
+            else {}
+        )
+        LinCls = (
+            BlockLinear if config.block_linear and not config.bl_only_mlp else nn.Linear
+        )
         self.c_attn = LinCls(config.n_embd, 3 * config.n_embd, bias=config.bias, **args)
         # output projection
         self.c_proj = LinCls(config.n_embd, config.n_embd, bias=config.bias, **args)
@@ -200,7 +206,7 @@ class MLP(nn.Module):
         super().__init__()
         LinCls = BlockLinear if cfg.block_linear else nn.Linear
 
-        args = {"b": cfg.bl_b} if cfg.block_linear else {}
+        args = {"b": cfg.bl_b, "version": cfg.bl_version} if cfg.block_linear else {}
         dim_mlp = cfg.n_embd * cfg.mlp_ratio
         self.mlp = nn.Sequential(
             LinCls(cfg.n_embd, dim_mlp, bias=cfg.bias, **args),
@@ -262,7 +268,7 @@ class GPT(nn.Module):
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
 
-    def get_num_params(self, non_embedding=True):
+    def get_num_params(self, non_embedding=True, non_lm_head=False):
         """
         Return the number of parameters in the model.
         For non-embedding count (default), the position embeddings get subtracted.
@@ -272,6 +278,8 @@ class GPT(nn.Module):
         n_params = sum(p.numel() for p in self.parameters())
         if non_embedding:
             n_params -= self.transformer.wpe.weight.numel()
+        if non_lm_head:
+            n_params -= self.lm_head.weight.numel()
 
         return n_params
 

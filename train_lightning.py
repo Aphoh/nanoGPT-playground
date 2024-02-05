@@ -30,6 +30,9 @@ class LightningGPTModule(L.LightningModule):
     def configure_model(self) -> None:
         self.module = GPT(self.config.gpt)
         self.module.apply(self.module._init_weights)
+        if self.config.compile:
+            self.orig_mod = self.module
+            self.module = torch.compile(self.module)
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         if self.module is None:
@@ -46,25 +49,24 @@ class LightningGPTModule(L.LightningModule):
         if self.module is None:
             raise RuntimeError("You forgot to call `model.configure_model()`")
 
-        trainer = self.trainer
         with torch.device("meta"):
             meta_model = GPT(self.module.config)
-            fpt = (
-                meta_model.estimate_flops_per_token()
-                * self.config.gpt.block_size
-                * self.config.micro_batch_size
-            )
-            self.print(
-                f"Estimated GFLOPs per token: {fpt * trainer.world_size / 1e9:.2f}"
-            )
+            fpt = meta_model.estimate_flops_per_token()
+            self.print(f"Estimated GFLOPs per token: {fpt / 1e9:.2f}")
             num_weights = self.module.get_num_params(non_embedding=True)
+            num_non_lm_weights = self.module.get_num_params(
+                non_embedding=True, non_lm_head=True
+            )
             fpt_pw = fpt / num_weights
+            fpt_pnlmw = fpt / num_non_lm_weights
             if self.global_rank == 0 and self.config.wandb_log:
                 wandb.config.update(
                     {
                         "num_weights": num_weights,
+                        "num_nonlm_weights": num_weights,
                         "flops_per_token": fpt,
                         "flops_per_token_per_weight": fpt_pw,
+                        "flops_per_token_per_nonlm_weight": fpt_pnlmw,
                     }
                 )
 
@@ -89,7 +91,7 @@ class LightningGPTModule(L.LightningModule):
             on_step=True,
             on_epoch=False,
             prog_bar=True,
-            sync_dist=self.config.devices > 1,
+            sync_dist=self.config.devices > 1,  # maybe disable
         )
         return loss
 
@@ -108,12 +110,20 @@ class LightningGPTModule(L.LightningModule):
     def state_dict(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         if self.module is None:
             raise RuntimeError("You forgot to call `model.configure_model()`")
-        return self.module.state_dict()
+
+        if self.config.compile:
+            return self.orig_mod.state_dict()
+        else:
+            return self.module.state_dict()
 
     def load_state_dict(self, state_dict: Mapping[str, Any], *args, **kwargs):
         if self.module is None:
             raise RuntimeError("You forgot to call `model.configure_model()`")
-        return self.module.load_state_dict(state_dict, *args, **kwargs)
+
+        if self.config.compile:
+            return self.orig_mod.load_state_dict(state_dict, *args, **kwargs)
+        else:
+            return self.module.load_state_dict(state_dict, *args, **kwargs)
 
 
 def main(config: Config) -> None:

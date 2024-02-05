@@ -8,15 +8,19 @@ import os
 @dataclass
 class GPTConfig:
     block_size: int = 1024
-    vocab_size: int = 50304  # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
+    # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
+    vocab_size: int = 50304
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
     dropout: float = 0.0
-    bias: bool = True  # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
+    bias: bool = True
 
     block_linear: bool = False  # use block linear layer
     bl_b: int = 8  # b dimension for block linear layer
+    bl_version: int = 1  # version of block linear transform
+    bl_only_mlp: bool = False  # only use block linear layer for mlp
 
     mlp_ratio: int = 4  # ratio of mlp middle hidden dimension to embedding dimension
     mlp_init_std: float = 0.02  # std dev of gaussian initialization for mlp weights
@@ -34,9 +38,9 @@ class Config:
 
     out_dir: str = "out"
     data_dir: str = "data"
-    eval_interval: int = 2000
+    eval_interval: int = 500
     log_interval: int = 1
-    eval_iters: int = 200
+    eval_iters: int = 250
     eval_only: bool = False  # if True, script exits right after the first eval
     always_save_checkpoint: bool = True  # always save a checkpoint after each eval
     init_from: str = "scratch"  # 'scratch' or 'resume' or 'gpt2*'
