@@ -175,9 +175,9 @@ if __name__ == "__main__":
     # crop down the model block size if desired, using model surgery
     if cfg.gpt.block_size < model.config.block_size:
         model.crop_block_size(cfg.gpt.block_size)
-        model_args[
-            "block_size"
-        ] = cfg.gpt.block_size  # so that the checkpoint will have the right value
+        model_args["block_size"] = (
+            cfg.gpt.block_size
+        )  # so that the checkpoint will have the right value
     model.to(device)
 
     print("------Training Model------")

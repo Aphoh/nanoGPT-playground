@@ -1,13 +1,13 @@
-log_interval: 10
 wandb_log: True
 num_workers: 4
 wandb_project: gpt2-block
 devices: 4
-nodes: 4
+nodes: 1
 device: cuda
 dtype: bfloat16
 
-eval_interval: 1600
+eval_interval: 20
+log_interval: 1
 
 gpt:
   block_linear: True

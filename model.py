@@ -11,6 +11,7 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from functools import partial
 from config import GPTConfig
 
 
@@ -122,18 +123,8 @@ class BlockLinear(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        # Mimic init.kaiming_uniform: https://github.com/pytorch/pytorch/blob/24087d07ca7ffa244575d259711dd7c99245a67a/torch/nn/init.py#L360
         for mat in [self.w1, self.w2]:
-            fan_in = mat.shape[-1]
-            gain = torch.nn.init.calculate_gain(
-                nonlinearity="leaky_relu", param=math.sqrt(5)
-            )
-            std = gain / math.sqrt(fan_in)
-            bound = (
-                math.sqrt(3.0) * std
-            )  # Calculate uniform bounds from standard deviation
-            with torch.no_grad():
-                mat.uniform_(-bound, bound)
+            torch.nn.init.kaiming_uniform_(mat)
         if self.bias is not None:
             torch.nn.init.zeros_(self.bias)
 
@@ -152,17 +143,14 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        args = (
-            {"b": config.bl_b, "version": config.bl_version}
-            if config.block_linear
-            else {}
-        )
-        LinCls = (
-            BlockLinear if config.block_linear and not config.bl_only_mlp else nn.Linear
-        )
-        self.c_attn = LinCls(config.n_embd, 3 * config.n_embd, bias=config.bias, **args)
+        if config.block_linear and not config.bl_only_mlp:
+            LinCls = partial(BlockLinear, b=config.bl_b, version=config.bl_version)
+        else:
+            LinCls = nn.Linear
+
+        self.c_attn = LinCls(config.n_embd, 3 * config.n_embd, bias=config.bias)
         # output projection
-        self.c_proj = LinCls(config.n_embd, config.n_embd, bias=config.bias, **args)
+        self.c_proj = LinCls(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
@@ -204,14 +192,16 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
-        LinCls = BlockLinear if cfg.block_linear else nn.Linear
+        if cfg.block_linear:
+            LinCls = partial(BlockLinear, b=cfg.bl_b, version=cfg.bl_version)
+        else:
+            LinCls = nn.Linear
 
-        args = {"b": cfg.bl_b, "version": cfg.bl_version} if cfg.block_linear else {}
         dim_mlp = cfg.n_embd * cfg.mlp_ratio
         self.mlp = nn.Sequential(
-            LinCls(cfg.n_embd, dim_mlp, bias=cfg.bias, **args),
+            LinCls(cfg.n_embd, dim_mlp, bias=cfg.bias),
             nn.GELU(),
-            LinCls(dim_mlp, cfg.n_embd, bias=cfg.bias, **args),
+            LinCls(dim_mlp, cfg.n_embd, bias=cfg.bias),
             nn.Dropout(cfg.dropout),
         )
 
@@ -288,10 +278,8 @@ class GPT(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
-        if isinstance(module, BlockLinear):  # TODO: figure out how to init these
+        if isinstance(module, BlockLinear):
             module.reset_parameters()
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 

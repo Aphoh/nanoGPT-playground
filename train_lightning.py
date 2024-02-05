@@ -148,6 +148,9 @@ def main(config: Config) -> None:
     gradient_accumulation_steps = config.batch_size // (
         config.micro_batch_size * config.devices * config.nodes
     )
+    n_steps_per_batch = (
+        config.devices * config.nodes * (config.batch_size // config.micro_batch_size)
+    )
 
     trainer = L.Trainer(
         accelerator="cpu" if config.device == "cpu" else "auto",
@@ -161,8 +164,8 @@ def main(config: Config) -> None:
         max_epochs=1,
         limit_val_batches=config.eval_iters,
         accumulate_grad_batches=gradient_accumulation_steps,
-        log_every_n_steps=config.log_interval,
-        val_check_interval=config.eval_interval,
+        log_every_n_steps=config.log_interval * n_steps_per_batch,
+        val_check_interval=config.eval_interval * n_steps_per_batch,
         plugins=[SLURMEnvironment()] if config.nodes > 1 else [],
     )
 
