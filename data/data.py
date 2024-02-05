@@ -34,7 +34,8 @@ def collation_fn(samples):
 
 def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool):
     shards = "{0000..0036}" if split == "train" else "0000"
-    url = f"https://r2.aphoh.us/openwebtext/{split}/shard-{shards}.tar.gz"
+    base = os.environ.get("OWT_URL", "https://r2.aphoh.us")
+    url = f"{base}/openwebtext/{split}/shard-{shards}.tar.gz"
 
     pipeline = (
         [wds.SimpleShardList(url)]
@@ -49,8 +50,18 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
         + ([wds.shuffle(bufsize=10000, initial=1000)] if shuffle else [])
         + [wds.batched(batch_size, collation_fn=collation_fn)]
     )
+    n_tokens = 9_035_582_198
+    _, world_size, _, num_workers = wds.utils.pytorch_worker_info()
+    n_batches = n_tokens // (block_size + 1) // batch_size // world_size // num_workers
+    print("Dataset n_batches:", n_batches)
 
-    dataset = wds.DataPipeline(*pipeline)
+    # owt is
+    dataset = (
+        wds.DataPipeline(*pipeline)
+        .repeat(2)
+        .with_epoch(n_batches=n_batches)
+        .with_length(n_batches)
+    )
     return dataset
 
 
