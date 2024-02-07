@@ -67,9 +67,14 @@ class LightningGPTModule(L.LightningModule):
                         "num_weights": num_weights,
                         "num_nonlm_weights": num_weights,
                         "flops_per_token": fpt,
+                    }
+                )
+                wandb.config.update(
+                    {
                         "flops_per_token_per_weight": fpt_pw,
                         "flops_per_token_per_nonlm_weight": fpt_pnlmw,
-                    }
+                    },
+                    allow_val_change=True,  # this is fine since these are rough floating point numbers
                 )
 
     def on_train_batch_start(self, batch: Any, batch_idx: int) -> None:
@@ -93,7 +98,7 @@ class LightningGPTModule(L.LightningModule):
             on_step=True,
             on_epoch=False,
             prog_bar=True,
-            # sync_dist=self.config.devices > 1,  # maybe disable
+            sync_dist=False,  # do not use in monitor callbacks!!!
         )
         return loss
 
@@ -106,7 +111,7 @@ class LightningGPTModule(L.LightningModule):
             on_step=False,
             on_epoch=True,
             prog_bar=True,
-            # sync_dist=self.config.devices > 1,
+            sync_dist=self.config.devices > 1,
         )
 
     def state_dict(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
@@ -141,9 +146,9 @@ def main(config: Config) -> None:
         config.micro_batch_size * config.devices * config.nodes
     )
 
+    # For some reason monitoring here with ddp bricks the training loop
+    # it's probably because we disable sync_dist due to nccl bugs
     model_checkpoint = ModelCheckpoint(
-        monitor="val_loss",
-        save_top_k=1,
         save_last=True,
         every_n_train_steps=gradient_accumulation_steps * config.eval_interval,
         dirpath=config.out_dir,
@@ -164,6 +169,7 @@ def main(config: Config) -> None:
         accumulate_grad_batches=gradient_accumulation_steps,
         log_every_n_steps=config.log_interval * gradient_accumulation_steps,
         val_check_interval=config.eval_interval * gradient_accumulation_steps,
+        use_distributed_sampler=False,  # this shouldn't matter since we use an iterable dataset, but just in case
         plugins=[SLURMEnvironment()] if config.nodes > 1 else [],
     )
 

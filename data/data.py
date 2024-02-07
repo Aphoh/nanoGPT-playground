@@ -13,15 +13,20 @@ class PreprocessFn:
         for sample in gen:
             ids = np.frombuffer(sample["ids"], dtype=np.uint16).astype(int)
             ids = torch.from_numpy(ids)
-            tokens_needed = self.block_size + 1
-            n_samples = len(ids) // tokens_needed
-            leftover_tokens = len(ids) - n_samples * tokens_needed
-            rand_shift = torch.randint(leftover_tokens, (1,)).item()
-            assert rand_shift + n_samples * tokens_needed <= len(ids)
-            for i in range(0, n_samples):
-                start = rand_shift + i * tokens_needed
-                x = ids[start : start + self.block_size]
-                y = ids[start + 1 : start + self.block_size + 1]
+            # eg len(ids) = 8193, block_size = 1024, len(ids) - block_size = 8193 - 1024 = 7169
+            # i will be 0, 1024, 2048, 3072, 4096, 5120, 6144, 7168
+            # we'll hit the last index, but not go over
+            # eg len(ids) = 8192, block_size = 1024, len(ids) - block_size = 8191 - 1024 = 7168
+            # i will be 0, 1024, 2048, 3072, 4096, 5120, 6144
+            # we'll skip the last 1023-ish elements
+            for i in range(0, len(ids) - self.block_size, self.block_size):
+                x = ids[i : i + self.block_size]
+                y = ids[i + 1 : i + self.block_size + 1]
+                assert len(x) == len(y) == self.block_size, (
+                    len(x),
+                    len(y),
+                    self.block_size,
+                )
                 yield (x, y)
 
 
@@ -50,15 +55,13 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
         + ([wds.shuffle(bufsize=10000, initial=1000)] if shuffle else [])
         + [wds.batched(batch_size, collation_fn=collation_fn)]
     )
-    n_tokens = 9_035_582_198
+    n_tokens = 9031397883 if split == "train" else 4432413
     _, world_size, _, num_workers = wds.utils.pytorch_worker_info()
     n_batches = n_tokens // (block_size + 1) // batch_size // world_size // num_workers
-    print("Dataset n_batches:", n_batches)
 
     # owt is
     dataset = (
         wds.DataPipeline(*pipeline)
-        .repeat(2)
         .with_epoch(nbatches=n_batches)
         .with_length(n_batches)
     )

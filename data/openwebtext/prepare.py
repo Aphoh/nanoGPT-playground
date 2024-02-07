@@ -61,11 +61,14 @@ if __name__ == "__main__":
         num_proc=num_proc,
     )
 
+    print("writing the tokenized splits to shards...")
+    split_lens = {}
     for split, dset in tokenized.items():
+        split_lens[split] = 0
         arr_len = np.sum(dset["len"], dtype=np.uint64)
         dtype = np.uint16  # (can do since enc.max_token_value == 50256 is < 2**16)
-        total_batches = 1024
-        elem_length = 8192
+        total_batches = 1024 if split == "train" else 1
+        elem_length = 8 * 1024 + 1  # + 1 so we can do next char pred
         shard_dir = os.path.join(os.path.dirname(__file__), split)
         os.makedirs(shard_dir, exist_ok=True)
         pattern = os.path.join(shard_dir, "shard-%04d.tar.gz")
@@ -78,12 +81,14 @@ if __name__ == "__main__":
                 arr_batch = np.concatenate(batch["ids"]).astype(dtype)
                 for idx in range(0, len(arr_batch) - elem_length, elem_length):
                     key = uuid.uuid4().hex
+                    split_lens[split] += elem_length
                     writer.write(
                         {
                             "__key__": key,
                             "ids": arr_batch[idx : idx + elem_length].tobytes(),
                         }
                     )
+        print(f"split: {split}, len: {split_lens[split]}")
 
     # train.bin is ~17GB, val.bin ~8.5MB
     # train has ~9B tokens (9,035,582,198)
