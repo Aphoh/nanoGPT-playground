@@ -78,11 +78,20 @@ class Config:
 
 def get_config() -> Config:
     cfg: Config = OmegaConf.structured(Config)
-    config_file = sys.argv[1]
-    if config_file.endswith(".yml") and "--" not in config_file:
+    config_index = [
+        (i, arg)
+        for i, arg in enumerate(sys.argv)
+        if arg.endswith(".yml") and "--" not in arg
+    ]
+    assert (
+        len(config_index) <= 1
+    ), f"Only one config file can be specified, but got {config_index}"
+    if config_index:
+        idx = config_index[0][0]
+        config_file = sys.argv.pop(idx)
         print("Loading config from", config_file)
         cfg: Config = OmegaConf.merge(cfg, OmegaConf.load(config_file))
-        sys.argv.pop(1)  # remove the config file
+
     cfg: Config = OmegaConf.merge(cfg, OmegaConf.from_cli())
     cfg.out_dir = os.environ.get("OUT_DIR", cfg.out_dir)  # override from env var
     cfg.data_dir = os.environ.get("DATA_DIR", cfg.data_dir)  # override from env var

@@ -3,6 +3,7 @@
 import math
 import time
 from typing import Any, Dict, Mapping, Optional
+import os
 
 from pathlib import Path
 import lightning as L
@@ -170,7 +171,11 @@ def main(config: Config) -> None:
         log_every_n_steps=config.log_interval * gradient_accumulation_steps,
         val_check_interval=config.eval_interval * gradient_accumulation_steps,
         use_distributed_sampler=False,  # this shouldn't matter since we use an iterable dataset, but just in case
-        plugins=[SLURMEnvironment()] if config.nodes > 1 else [],
+        plugins=(
+            [SLURMEnvironment(auto_requeue=True)]
+            if "SLURM_JOB_ID" in os.environ
+            else []
+        ),
     )
 
     if trainer.global_rank == 0 and config.wandb_log:
