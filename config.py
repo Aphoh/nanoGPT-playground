@@ -42,8 +42,8 @@ class Config:
     log_interval: int = 1
     eval_iters: int = 250
     eval_only: bool = False  # if True, script exits right after the first eval
-    always_save_checkpoint: bool = True  # always save a checkpoint after each eval
-    init_from: str = "scratch"  # 'scratch' or 'resume' or 'gpt2*'
+    save_checkpoints: bool = True  # always save a checkpoint after each eval
+    init_from: str = "resume"  # 'scratch' or 'resume' or 'gpt2*'
     wandb_log: bool = False  # disabled by default
     wandb_project: str = "nanoGPT-playground"
     dataset: str = "openwebtext"

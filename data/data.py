@@ -3,9 +3,10 @@ import numpy as np
 import os
 import torch
 import webdataset as wds
+from config import Config
 
 
-class PreprocessFn:
+class _PreprocessFn:
     def __init__(self, block_size: int):
         self.block_size = block_size
 
@@ -30,11 +31,15 @@ class PreprocessFn:
                 yield (x, y)
 
 
-def collation_fn(samples):
+def _collation_fn(samples):
     res = list(zip(*samples))
     for i in range(len(res)):
         res[i] = torch.stack(res[i])
     return res
+
+
+def _owt_exception_handler(ext):
+    print(f"WDS Exception: {ext}, continuing")
 
 
 def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool):
@@ -47,28 +52,22 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
         + [wds.split_by_worker, wds.split_by_node]
         + ([wds.shuffle(10)] if shuffle else [])
         + [
-            wds.tarfile_to_samples(
-                handler=lambda exn: print(f"WDS Exception: {exn}, continuing")
-            ),
-            PreprocessFn(block_size),
+            wds.tarfile_to_samples(handler=_owt_exception_handler),
+            _PreprocessFn(block_size),
         ]
         + ([wds.shuffle(bufsize=10000, initial=1000)] if shuffle else [])
-        + [wds.batched(batch_size, collation_fn=collation_fn)]
+        + [wds.batched(batch_size, collation_fn=_collation_fn)]
     )
     n_tokens = 9031397883 if split == "train" else 4432413
     _, world_size, _, num_workers = wds.utils.pytorch_worker_info()
     n_batches = n_tokens // (block_size + 1) // batch_size // world_size // num_workers
 
     # owt is
-    dataset = (
-        wds.DataPipeline(*pipeline)
-        .with_epoch(nbatches=n_batches)
-        .with_length(n_batches)
-    )
+    dataset = wds.DataPipeline(*pipeline)
     return dataset
 
 
-def get_owt_iter(
+def _get_owt_iter(
     split: str,
     batch_size: int,
     block_size: int,
@@ -88,7 +87,7 @@ def get_owt_iter(
             yield [x.to(device, non_blocking=True) for x in batch]
 
 
-class TextDataset(Dataset):
+class _TextDataset(Dataset):
     def __init__(self, data_dir, split="train", block_size=128):
         super().__init__()
         self.data = np.memmap(
@@ -109,16 +108,16 @@ class TextDataset(Dataset):
         )
 
 
-def get_datasets(
+def _get_binary_datasets(
     data_dir: str,
     block_size: int,
-) -> tuple[TextDataset, TextDataset]:
-    train_dataset = TextDataset(data_dir, "train", block_size)
-    val_dataset = TextDataset(data_dir, "val", block_size)
+) -> tuple[_TextDataset, _TextDataset]:
+    train_dataset = _TextDataset(data_dir, "train", block_size)
+    val_dataset = _TextDataset(data_dir, "val", block_size)
     return train_dataset, val_dataset
 
 
-def make_iter(dset: TextDataset, batch_size: int, device: torch.device):
+def _make_iter(dset: _TextDataset, batch_size: int, device: torch.device):
     while True:
         elems = [dset[torch.randint(len(dset), (1,))] for _ in range(batch_size)]
         xs = [x for x, _ in elems]
@@ -128,3 +127,33 @@ def make_iter(dset: TextDataset, batch_size: int, device: torch.device):
             yield [a.pin_memory().to(device, non_blocking=True) for a in batch]
         else:
             yield [a.to(device, non_blocking=True) for a in batch]
+
+
+def get_dataset_iters(cfg: Config, device: torch.device):
+    data_dir = os.path.join(cfg.data_dir, cfg.dataset)
+
+    train_iter, val_iter = None, None
+    if cfg.dataset == "openwebtext":
+        train_iter = _get_owt_iter(
+            "train",
+            cfg.micro_batch_size,
+            cfg.gpt.block_size,
+            True,
+            device,
+            cfg.num_workers,
+        )
+        val_iter = _get_owt_iter(
+            "val", cfg.micro_batch_size, cfg.gpt.block_size, False, device, 1
+        )
+        assert (
+            cfg.gpt.vocab_size >= 50257
+        ), f"vocab size {cfg.gpt.vocab_size} too small for GPT-2"
+    else:
+        train_dataset, val_dataset = _get_binary_datasets(
+            data_dir,
+            cfg.gpt.block_size,
+        )
+        train_iter = _make_iter(train_dataset, cfg.micro_batch_size, device)
+        val_iter = _make_iter(val_dataset, cfg.micro_batch_size, device)
+
+    return train_iter, val_iter

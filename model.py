@@ -406,7 +406,9 @@ class GPT(nn.Module):
 
         return model
 
-    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
+    def configure_optimizers(
+        self, weight_decay, learning_rate, betas, device_type
+    ) -> torch.optim.Optimizer:
         # start with all of the candidate parameters
         param_dict = {pn: p for pn, p in self.named_parameters()}
         # filter out those that do not require grad
