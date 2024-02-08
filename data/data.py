@@ -49,12 +49,13 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
 
     pipeline = (
         [wds.SimpleShardList(url)]
-        + [wds.split_by_worker, wds.split_by_node]
+        + ([wds.split_by_worker, wds.split_by_node] if split == "train" else [])
         + ([wds.shuffle(10)] if shuffle else [])
         + [
             wds.tarfile_to_samples(handler=_owt_exception_handler),
             _PreprocessFn(block_size),
         ]
+        + ([wds.split_by_worker, wds.split_by_node] if split == "val" else [])
         + ([wds.shuffle(bufsize=10000, initial=1000)] if shuffle else [])
         + [wds.batched(batch_size, collation_fn=_collation_fn)]
     )

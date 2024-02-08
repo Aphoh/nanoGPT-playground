@@ -193,7 +193,8 @@ def estimate_loss(cfg: Config, rs: RunState, model: GPT, train_iter, val_iter):
         rank_mean = losses.mean()
         if rs.winfo.ddp:
             rs.print("reducing loss across ranks")
-            dist.all_reduce(rank_mean, op=dist.ReduceOp.SUM)
+            dist.reduce(rank_mean, dst=0, op=dist.ReduceOp.SUM, async_op=False)
+            rs.print(f"rank {rs.winfo.rank} reduced loss {rank_mean.item()}")
             rs.print("loss reduced")
         out[split] = rank_mean.item() / winfo.world_size
     model.train()
@@ -221,6 +222,7 @@ if __name__ == "__main__":
     # various inits, derived attributes, I/O setup
     winfo = get_word_info(cfg)
     rs = init_state(cfg, winfo)
+    rs.r0_print(f"CONFIG:\n{OmegaConf.to_yaml(cfg)}")
 
     train_iter, val_iter = get_dataset_iters(cfg, rs.device)
 

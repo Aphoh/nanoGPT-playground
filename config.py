@@ -111,7 +111,6 @@ def get_config() -> Config:
     ), "Can't use both monarch and block linear layers"
 
     OmegaConf.set_readonly(cfg, True)  # make read-only to avoid accidental overwrites
-    print("Final config:", OmegaConf.to_yaml(cfg))
     return cfg
 
 
