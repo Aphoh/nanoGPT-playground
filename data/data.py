@@ -54,9 +54,9 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
     url = f"{base}/openwebtext/{split}/shard-{shards}.tar.gz"
 
     pipeline = (
-        [wds.SimpleShardList(url)]
+        [wds.SimpleShardList(url), _repeatedly]
         + ([wds.split_by_worker, wds.split_by_node] if split == "train" else [])
-        + ([wds.shuffle(10)] if shuffle else [])
+        + ([wds.shuffle(bufsize=10, initial=4)] if shuffle else [])
         + [
             wds.tarfile_to_samples(handler=_owt_exception_handler),
             _PreprocessFn(block_size),

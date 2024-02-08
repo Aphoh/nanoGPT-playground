@@ -246,7 +246,9 @@ if __name__ == "__main__":
 
     # wrap model into DDP container
     if rs.winfo.ddp:
+        rs.print("wrapping model")
         model = DDP(model, device_ids=[rs.winfo.local_rank])
+        rs.print("model wrapped")
 
     # logging
     if rs.wandb_log and rs.iter_num == 0:
@@ -262,6 +264,7 @@ if __name__ == "__main__":
         )
 
     # training loop
+    rs.print("Ready to train!")
     X, Y = next(train_iter)  # fetch the very first batch
     t0 = time.time()
     running_mfu = -1.0
