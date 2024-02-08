@@ -31,6 +31,12 @@ class _PreprocessFn:
                 yield (x, y)
 
 
+def _repeatedly(source):
+    while True:
+        for sample in source:
+            yield sample
+
+
 def _collation_fn(samples):
     res = list(zip(*samples))
     for i in range(len(res)):
@@ -54,6 +60,7 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
         + [
             wds.tarfile_to_samples(handler=_owt_exception_handler),
             _PreprocessFn(block_size),
+            _repeatedly,
         ]
         + ([wds.split_by_worker, wds.split_by_node] if split == "val" else [])
         + ([wds.shuffle(bufsize=10000, initial=1000)] if shuffle else [])

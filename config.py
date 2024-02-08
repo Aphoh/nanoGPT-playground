@@ -43,7 +43,7 @@ class Config:
     data_dir: str = "data"
     eval_interval: int = 500
     log_interval: int = 1
-    eval_iters: int = 250
+    eval_batches: int = 1
     eval_only: bool = False  # if True, script exits right after the first eval
     save_checkpoints: bool = True  # always save a checkpoint after each eval
     init_from: str = "resume"  # 'scratch' or 'resume' or 'gpt2*'
@@ -118,9 +118,9 @@ def test_get_config_yaml():
     sys.argv = [
         "python",
         "config/train_gpt2_mini_block.yml",
-        "eval_iters=101",
+        "eval_batches=101",
         "gpt.block_size=63",
     ]
     cfg = get_config()
-    assert cfg.eval_iters == 101
+    assert cfg.eval_batches == 101
     assert cfg.gpt.block_size == 63

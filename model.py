@@ -334,7 +334,7 @@ class Block(nn.Module):
 class GPT(nn.Module):
     config: GPTConfig
 
-    def __init__(self, config: GPTConfig):
+    def __init__(self, config: GPTConfig, print_fn=print):
         super().__init__()
         self.config = config
 
@@ -362,9 +362,10 @@ class GPT(nn.Module):
                     torch.nn.init.normal_(
                         p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer)
                     )
+        self.print = print_fn
 
         # report number of parameters
-        print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
+        self.print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
 
     def get_num_params(self, non_embedding=True, non_lm_head=False):
         """
@@ -443,10 +444,10 @@ class GPT(nn.Module):
         ]
         num_decay_params = sum(p.numel() for p in decay_params)
         num_nodecay_params = sum(p.numel() for p in nodecay_params)
-        print(
+        self.print(
             f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters"
         )
-        print(
+        self.print(
             f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters"
         )
         # Create AdamW optimizer and use the fused version if it is available
@@ -456,7 +457,7 @@ class GPT(nn.Module):
             betas=betas,
             fused=device_type == "cuda",
         )
-        print(f"using fused AdamW: {device_type=='cuda'}")
+        self.print(f"using fused AdamW: {device_type=='cuda'}")
 
         return optimizer
 

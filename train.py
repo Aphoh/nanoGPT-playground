@@ -134,36 +134,36 @@ def init_state(cfg: Config, winfo: WorldInfo) -> RunState:
         device=device,
         ctx=ctx,
     )
-    rs.print(f"initialized run state {rs}", flush=True)
+    rs.print(f"initialized run state {rs}")
     return rs
 
 
 def build_model(rs: RunState, cfg: Config) -> tuple[GPT, torch.optim.Optimizer]:
-    model = GPT(cfg.gpt).to(rs.device)
+    model = GPT(cfg.gpt, print_fn=rs.r0_print).to(rs.device)
     checkpoint = None
     if cfg.init_from == "scratch":
         rs.r0_print("Training from scratch")
         # When we wrap with DDP, it will sync the model weights across all processes
-    elif cfg.init_from == "resume":
-        rs.print(f"Resuming training from {cfg.out_dir}")
+    elif cfg.init_from == "resume" and rs.winfo.rank == 0:  # only load on rank 0
+        rs.r0_print(f"Resuming training from {cfg.out_dir}")
         # resume training from a checkpoint.
         ckpt_path = os.path.join(cfg.out_dir, "ckpt.pt")
         if os.path.isfile(ckpt_path):
-            rs.print(f"Found checkpoint {ckpt_path}")
+            rs.r0_print(f"Found checkpoint {ckpt_path}")
             checkpoint = torch.load(ckpt_path, map_location=rs.device)
             read_cfg: Config = checkpoint["config"]
             if read_cfg != cfg:
                 raise ValueError(
                     f"""checkpoint config does not match command line config: 
                     Checkpoint Config:
-                    {read_cfg}\n
+                    {OmegaConf.to_yaml(read_cfg)}\n
                     Command Line Config:
-                    {cfg}"""
+                    {OmegaConf.to_yaml(cfg)}"""
                 )
             state_dict = checkpoint["model"]
             model.load_state_dict(state_dict, strict=True)
             rs.iter_num = checkpoint["iter_num"]
-            rs.print(f"loaded checkpoint at iter_num={rs.iter_num}")
+            rs.r0_print(f"loaded checkpoint at iter_num={rs.iter_num}")
 
     optimizer = model.configure_optimizers(
         cfg.weight_decay, cfg.learning_rate, (cfg.beta1, cfg.beta2), rs.device.type
@@ -177,15 +177,17 @@ def build_model(rs: RunState, cfg: Config) -> tuple[GPT, torch.optim.Optimizer]:
 
 @torch.no_grad()
 def estimate_loss(cfg: Config, rs: RunState, model: GPT, train_iter, val_iter):
+    eval_iters = rs.gradient_accumulation_steps * cfg.eval_batches
     out = {}
     model.eval()
     for split, loader in [
         ("train", train_iter),
         ("val", val_iter),
     ]:
-        losses = torch.zeros(cfg.eval_iters, device=rs.device)
+        t0 = time.time()
+        losses = torch.zeros(eval_iters, device=rs.device)
         for k, (X, Y) in tqdm(
-            zip(range(cfg.eval_iters), iter(loader)),
+            zip(range(eval_iters), iter(loader)),
             desc=f"Evaluating {split}",
             disable=rs.winfo.rank != 0,
             leave=False,
@@ -197,6 +199,7 @@ def estimate_loss(cfg: Config, rs: RunState, model: GPT, train_iter, val_iter):
         if rs.winfo.ddp:
             dist.reduce(rank_mean, dst=0, op=dist.ReduceOp.SUM, async_op=False)
         out[split] = rank_mean.item() / winfo.world_size
+        rs.print(f"completed {split} eval in {time.time()-t0:.1f}s")
     model.train()
     return out
 
@@ -334,7 +337,7 @@ if __name__ == "__main__":
                 running_mfu = (
                     mfu if running_mfu == -1.0 else 0.9 * running_mfu + 0.1 * mfu
                 )
-            print(
+            rs.r0_print(
                 f"iter {rs.iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, mfu {running_mfu*100:.2f}%"
             )
             if rs.wandb_log:
