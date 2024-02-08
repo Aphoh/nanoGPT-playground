@@ -53,7 +53,7 @@ class Config:
     num_workers: int = 0
 
     batch_size: int = 480
-    micro_batch_size: int = 12
+    micro_batch_size: int = 30
 
     learning_rate: float = 6e-4  # max learning rate
     max_iters: int = 600000  # total number of training iterations

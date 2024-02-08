@@ -4,6 +4,9 @@ import os
 import torch
 import webdataset as wds
 from config import Config
+from contextlib import contextmanager
+from tqdm import tqdm
+import signal
 
 
 class _PreprocessFn:
@@ -31,9 +34,12 @@ class _PreprocessFn:
                 yield (x, y)
 
 
+# Read the whole source into memory and repeat it indefinitely
+# do _not_ use with large sources
 def _repeatedly(source):
+    output = list(source)
     while True:
-        for sample in source:
+        for sample in output:
             yield sample
 
 
@@ -60,11 +66,10 @@ def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool)
         + [
             wds.tarfile_to_samples(handler=_owt_exception_handler),
             _PreprocessFn(block_size),
-            _repeatedly,
         ]
         + ([wds.split_by_worker, wds.split_by_node] if split == "val" else [])
         + ([wds.shuffle(bufsize=10000, initial=1000)] if shuffle else [])
-        + [wds.batched(batch_size, collation_fn=_collation_fn)]
+        + [wds.batched(batch_size, collation_fn=_collation_fn, partial=False)]
     )
     n_tokens = 9031397883 if split == "train" else 4432413
     _, world_size, _, num_workers = wds.utils.pytorch_worker_info()
@@ -165,3 +170,54 @@ def get_dataset_iters(cfg: Config, device: torch.device):
         val_iter = _make_iter(val_dataset, cfg.micro_batch_size, device)
 
     return train_iter, val_iter
+
+
+@contextmanager
+def timeout(duration, msg=None):
+    def timeout_handler(signum, frame):
+        raise TimeoutError(f"block timedout after {duration} seconds with {msg}")
+
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(duration)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+
+
+def get_dataset_elems(iter, n, **kwargs):
+    with timeout(1, msg=kwargs):
+        for i in range(n):
+            next(iter)
+
+
+def test_iters_work():
+    print("Running test")
+    for world_size in (pbar1 := tqdm([1, 2, 4, 8, 16, 32, 64])):
+        pbar1.set_postfix(world_size=world_size)
+        os.environ["WORLD_SIZE"] = str(world_size)
+        for num_workers in (pbar2 := tqdm([1, 2, 4], leave=False)):
+            pbar2.set_postfix(num_workers=num_workers)
+            os.environ["NUM_WORKERS"] = str(num_workers)
+            for rank in (pbar3 := tqdm(range(0, world_size), leave=False)):
+                pbar3.set_postfix(rank=rank)
+                os.environ["RANK"] = str(rank)
+                for worker in (pbar4 := tqdm(range(0, num_workers), leave=False)):
+                    pbar4.set_postfix(worker=worker)
+                    os.environ["WORKER"] = str(worker)
+                    for split in ["train", "val"]:
+                        dset = get_owt_dataset(split, 8, 128, split == "train")
+                        get_dataset_elems(
+                            iter(dset),
+                            10,
+                            num_workers=num_workers,
+                            world_size=world_size,
+                            rank=rank,
+                            worker=worker,
+                            split=split,
+                        )
+
+
+if __name__ == "__main__":  # run this with python -m data.data
+    test_iters_work()
+    print("All tests passed")
