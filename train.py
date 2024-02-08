@@ -142,26 +142,8 @@ def build_model(rs: RunState, cfg: Config) -> tuple[GPT, torch.optim.Optimizer]:
     model = GPT(cfg.gpt).to(rs.device)
     checkpoint = None
     if cfg.init_from == "scratch":
-        # here we initialize a new model from scratch on rank 0, save it to disk, and then load it on all other ranks
-        if rs.winfo.ddp:
-            if winfo.rank == 0:
-                rs.print("writing init-d model to", cfg.out_dir)
-                torch.save(
-                    model.state_dict(), os.path.join(cfg.out_dir, "tmp-model.pt")
-                )
-            dist.barrier()
-            if winfo.rank != 0:
-                rs.print("loading init-d model from", cfg.out_dir)
-                model.load_state_dict(
-                    torch.load(os.path.join(cfg.out_dir, "tmp-model.pt"))
-                )
-            dist.barrier()
-            if winfo.rank == 0:
-                rs.print("cleaning up tmp-model.pt")
-                os.remove(os.path.join(cfg.out_dir, "tmp-model.pt"))
-            dist.barrier()
-            rs.print("model loaded, ready to proceed")
-
+        rs.r0_print("Training from scratch")
+        # When we wrap with DDP, it will sync the model weights across all processes
     elif cfg.init_from == "resume":
         rs.print(f"Resuming training from {cfg.out_dir}")
         # resume training from a checkpoint.
