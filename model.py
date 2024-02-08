@@ -82,6 +82,106 @@ def block_linear_2(x, w1, w2, b: int = 8):
     return out1.view(x.shape[:-1] + (-1,))
 
 
+@torch.jit.script
+def monarch(x, w1, w2):
+    xv = x.view(-1, x.shape[-1])
+    batch, n = xv.shape
+    nblocks, w1_out, w1_in = w1.shape
+    d, w2_out, w2_in = w2.shape
+    assert nblocks == d
+    assert n % nblocks == 0
+    assert n // nblocks == w1_in
+    assert w1_out == w2_in
+    xv = xv.view(batch, nblocks, n // nblocks)
+
+    # k qp matrices doing a mvm with bk p-length vectors
+    out1 = torch.einsum("kqp,bkp->bkq", w1, xv)
+    out1 = out1.view(batch, w1_out, nblocks).transpose(-1, -2)
+    # same as before, but we output the transpose (qk instead of kq)
+    out1 = torch.einsum("kqp,bkp->bqk", w2, out1)
+    return out1.reshape(x.shape[:-1] + (w2_out * nblocks,))
+    # out1 = rearrange(rearrange(out1, "b k q -> b (k q)"), "b (r l) -> b l r", l=l)
+
+
+def test_monarch_jit():
+    from einops import rearrange
+
+    n_blocks, n, seq, batch = 4, 256, 16, 5
+    x = torch.randn(batch, seq, n)
+    w1 = torch.randn(n_blocks, 2 * n // n_blocks, n // n_blocks)
+    w2 = torch.randn(n_blocks, 4 * n // n_blocks, 2 * n // n_blocks)
+    k, q, p = w1.shape
+    l, s, r = w2.shape
+    assert k * p == n
+    assert l * r == k * q
+    x_reshaped = x.view(-1, n)
+    w1_dense = torch.block_diag(*torch.unbind(w1, dim=0))
+    out1 = F.linear(x_reshaped, w1_dense)
+    out1 = rearrange(out1, "b (r l) -> b (l r)", l=l)
+    w2_dense = torch.block_diag(*torch.unbind(w2, dim=0))
+    out2 = F.linear(out1, w2_dense)
+    out2 = rearrange(out2, "b (l s) -> b (s l)", l=l)
+    out2 = out2.view(batch, seq, -1)
+
+    assert torch.allclose(out2, monarch(x, w1, w2))
+
+
+class MonarchLinear(nn.Module):
+    n_blocks: int
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        n_blocks: int = 4,
+        bias: bool = False,
+    ):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.n_blocks = n_blocks
+        assert (
+            in_features % n_blocks == 0
+        ), f"in_features={in_features} n_blocks={n_blocks}"
+        assert (
+            out_features % n_blocks == 0
+        ), f"out_features={out_features} n_blocks={n_blocks}"
+        ib = in_features // n_blocks
+        ob = out_features // n_blocks
+        if in_features > out_features:  # we do right matmuls here for some reason
+            self.w1 = nn.Parameter(torch.empty(n_blocks, ib, ib))
+            self.w2 = nn.Parameter(torch.empty(n_blocks, ob, ib))
+        else:
+            self.w1 = nn.Parameter(torch.empty(n_blocks, ob, ib))
+            self.w2 = nn.Parameter(torch.empty(n_blocks, ob, ob))
+        if bias:
+            self.bias = nn.Parameter(torch.empty(out_features))
+        else:
+            self.register_parameter("bias", None)
+        self.reset_parameters()
+
+    def forward(self, x):
+        return monarch(x, self.w1, self.w2)
+
+    def reset_parameters(self) -> None:
+        for w in [self.w1, self.w2]:
+            fan_in = w.shape[-1]
+            gain = nn.init.calculate_gain(nonlinearity="leaky_relu", param=math.sqrt(5))
+            std = gain / math.sqrt(fan_in)
+            bound = (
+                math.sqrt(3.0) * std
+            )  # Calculate uniform bounds from standard deviation
+            with torch.no_grad():
+                w.uniform_(-bound, bound)
+        if self.bias is not None:
+            fan_in = self.bias.shape[-1]
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            nn.init.uniform_(self.bias, -bound, bound)
+
+    def extra_repr(self) -> str:
+        return f"in_features={self.in_features}, out_features={self.out_features}, n_blocks={self.n_blocks}"
+
+
 class BlockLinear(nn.Module):
     """
     Linear layer that takes input vectors of size n=mb and applies transformations/permutations
@@ -145,14 +245,15 @@ class BlockLinear(nn.Module):
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config: GPTConfig):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
+        LinCls = nn.Linear
         if config.block_linear and not config.bl_only_mlp:
             LinCls = partial(BlockLinear, b=config.bl_b, version=config.bl_version)
-        else:
-            LinCls = nn.Linear
+        elif config.monarch_linear:
+            LinCls = partial(MonarchLinear, n_blocks=config.monarch_n_blocks)
 
         self.c_attn = LinCls(config.n_embd, 3 * config.n_embd, bias=config.bias)
         # output projection
@@ -198,10 +299,11 @@ class CausalSelfAttention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, cfg: GPTConfig):
         super().__init__()
+        LinCls = nn.Linear
         if cfg.block_linear:
             LinCls = partial(BlockLinear, b=cfg.bl_b, version=cfg.bl_version)
-        else:
-            LinCls = nn.Linear
+        elif cfg.monarch_linear:
+            LinCls = partial(MonarchLinear, n_blocks=cfg.monarch_n_blocks)
 
         dim_mlp = cfg.n_embd * cfg.mlp_ratio
         self.mlp = nn.Sequential(
@@ -286,6 +388,8 @@ class GPT(nn.Module):
                 torch.nn.init.zeros_(module.bias)
         if isinstance(module, BlockLinear):
             module.reset_parameters()
+        if isinstance(module, MonarchLinear):
+            module.reset_parameters()
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
@@ -321,90 +425,6 @@ class GPT(nn.Module):
             loss = None
 
         return logits, loss
-
-    def crop_block_size(self, block_size):
-        # model surgery to decrease the block size if necessary
-        # e.g. we may load the GPT2 pretrained model checkpoint (block size 1024)
-        # but want to use a smaller block size for some smaller, simpler model
-        assert block_size <= self.config.block_size
-        self.config.block_size = block_size
-        self.transformer.wpe.weight = nn.Parameter(
-            self.transformer.wpe.weight[:block_size]
-        )
-        for block in self.transformer.h:
-            if hasattr(block.attn, "bias"):
-                block.attn.bias = block.attn.bias[:, :, :block_size, :block_size]
-
-    @classmethod
-    def from_pretrained(cls, model_type, override_args=None):
-        assert model_type in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"}
-        override_args = override_args or {}  # default to empty dict
-        # only dropout can be overridden see more notes below
-        assert all(k == "dropout" for k in override_args)
-        from transformers import GPT2LMHeadModel
-
-        print("loading weights from pretrained gpt: %s" % model_type)
-
-        # n_layer, n_head and n_embd are determined from model_type
-        config_args = {
-            "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
-            "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
-            "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
-            "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
-        }[model_type]
-        print("forcing vocab_size=50257, block_size=1024, bias=True")
-        config_args["vocab_size"] = 50257  # always 50257 for GPT model checkpoints
-        config_args["block_size"] = 1024  # always 1024 for GPT model checkpoints
-        config_args["bias"] = True  # always True for GPT model checkpoints
-        # we can override the dropout rate, if desired
-        if "dropout" in override_args:
-            print(f"overriding dropout rate to {override_args['dropout']}")
-            config_args["dropout"] = override_args["dropout"]
-        # create a from-scratch initialized minGPT model
-        config = GPTConfig(**config_args)
-        model = GPT(config)
-        sd = model.state_dict()
-        sd_keys = sd.keys()
-        sd_keys = [
-            k for k in sd_keys if not k.endswith(".attn.bias")
-        ]  # discard this mask / buffer, not a param
-
-        # init a huggingface/transformers model
-        model_hf = GPT2LMHeadModel.from_pretrained(model_type)
-        sd_hf = model_hf.state_dict()
-
-        # copy while ensuring all of the parameters are aligned and match in names and shapes
-        sd_keys_hf = sd_hf.keys()
-        sd_keys_hf = [
-            k for k in sd_keys_hf if not k.endswith(".attn.masked_bias")
-        ]  # ignore these, just a buffer
-        sd_keys_hf = [
-            k for k in sd_keys_hf if not k.endswith(".attn.bias")
-        ]  # same, just the mask (buffer)
-        transposed = [
-            "attn.c_attn.weight",
-            "attn.c_proj.weight",
-            "mlp.c_fc.weight",
-            "mlp.c_proj.weight",
-        ]
-        # basically the openai checkpoints use a "Conv1D" module, but we only want to use a vanilla Linear
-        # this means that we have to transpose these weights when we import them
-        assert len(sd_keys_hf) == len(
-            sd_keys
-        ), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
-        for k in sd_keys_hf:
-            if any(k.endswith(w) for w in transposed):
-                # special treatment for the Conv1D weights we need to transpose
-                assert sd_hf[k].shape[::-1] == sd[k].shape
-                with torch.no_grad():
-                    sd[k].copy_(sd_hf[k].t())
-            else:
-                # vanilla copy over the other parameters
-                assert sd_hf[k].shape == sd[k].shape
-                with torch.no_grad():
-                    sd[k].copy_(sd_hf[k])
-
-        return model
 
     def configure_optimizers(
         self, weight_decay, learning_rate, betas, device_type

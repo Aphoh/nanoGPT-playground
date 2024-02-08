@@ -22,6 +22,9 @@ class GPTConfig:
     bl_version: int = 1  # version of block linear transform
     bl_only_mlp: bool = False  # only use block linear layer for mlp
 
+    monarch_linear: bool = False  # use monarch linear layer
+    monarch_n_blocks: int = 4  # number of blocks in monarch linear layer
+
     mlp_ratio: int = 4  # ratio of mlp middle hidden dimension to embedding dimension
     mlp_init_std: float = 0.02  # std dev of gaussian initialization for mlp weights
 
@@ -102,6 +105,10 @@ def get_config() -> Config:
     assert (
         cfg.batch_size % cfg.micro_batch_size == 0
     ), "batch_size must be divisible by micro_batch_size"
+
+    assert not (
+        cfg.gpt.monarch_linear and cfg.gpt.block_linear
+    ), "Can't use both monarch and block linear layers"
 
     OmegaConf.set_readonly(cfg, True)  # make read-only to avoid accidental overwrites
     print("Final config:", OmegaConf.to_yaml(cfg))
