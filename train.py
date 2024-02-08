@@ -84,7 +84,6 @@ def get_word_info(cfg) -> WorldInfo:
     if winfo.ddp:
         dist.init_process_group(backend=cfg.backend)
         winfo.rank = int(os.environ["RANK"])
-        dist.get_group_rank()
         winfo.local_rank = int(os.environ["LOCAL_RANK"])
         winfo.world_size = int(os.environ["WORLD_SIZE"])
         # this process will do logging, checkpointing etc.
@@ -102,6 +101,7 @@ def init_state(cfg: Config, winfo: WorldInfo) -> RunState:
     assert (
         gradient_accumulation_steps % winfo.world_size == 0
     ), f"world_size {winfo.world_size} must divide gradient_accumulation_steps {gradient_accumulation_steps} evenly"
+    gradient_accumulation_steps //= winfo.world_size
 
     wandb_log = cfg.wandb_log and winfo.rank == 0
     if wandb_log:
@@ -183,7 +183,7 @@ def estimate_loss(cfg: Config, rs: RunState, model: GPT, train_iter, val_iter):
         ("train", train_iter),
         ("val", val_iter),
     ]:
-        losses = torch.zeros(cfg.eval_iters)
+        losses = torch.zeros(cfg.eval_iters, device=rs.device)
         for k, (X, Y) in tqdm(
             zip(range(cfg.eval_iters), iter(loader)), desc=f"Evaluating {split}"
         ):
@@ -195,7 +195,7 @@ def estimate_loss(cfg: Config, rs: RunState, model: GPT, train_iter, val_iter):
             rs.print("reducing loss across ranks")
             dist.all_reduce(rank_mean, op=dist.ReduceOp.SUM)
             rs.print("loss reduced")
-        out[split] = rank_mean / winfo.world_size
+        out[split] = rank_mean.item() / winfo.world_size
     model.train()
     return out
 
