@@ -185,17 +185,17 @@ def estimate_loss(cfg: Config, rs: RunState, model: GPT, train_iter, val_iter):
     ]:
         losses = torch.zeros(cfg.eval_iters, device=rs.device)
         for k, (X, Y) in tqdm(
-            zip(range(cfg.eval_iters), iter(loader)), desc=f"Evaluating {split}"
+            zip(range(cfg.eval_iters), iter(loader)),
+            desc=f"Evaluating {split}",
+            disable=rs.winfo.rank != 0,
+            leave=False,
         ):
             with rs.ctx:
                 _, loss = model(X, Y)
             losses[k] = loss.item()
         rank_mean = losses.mean()
         if rs.winfo.ddp:
-            rs.print("reducing loss across ranks")
             dist.reduce(rank_mean, dst=0, op=dist.ReduceOp.SUM, async_op=False)
-            rs.print(f"rank {rs.winfo.rank} reduced loss {rank_mean.item()}")
-            rs.print("loss reduced")
         out[split] = rank_mean.item() / winfo.world_size
     model.train()
     return out
