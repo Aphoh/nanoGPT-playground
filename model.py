@@ -148,7 +148,7 @@ class MonarchLinear(nn.Module):
         ), f"out_features={out_features} n_blocks={n_blocks}"
         ib = in_features // n_blocks
         ob = out_features // n_blocks
-        if in_features > out_features:  # we do right matmuls here for some reason
+        if in_features < out_features:  # we do right matmuls here for some reason
             self.w1 = nn.Parameter(torch.empty(n_blocks, ib, ib))
             self.w2 = nn.Parameter(torch.empty(n_blocks, ob, ib))
         else:

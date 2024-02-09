@@ -1,0 +1,14 @@
+eval_batches: 5 # 5 batches is 200 iters of 12 batch size, same as nanoGPT
+wandb_log: True
+num_workers: 4
+wandb_project: gpt2-block
+device: cuda
+dtype: bfloat16
+
+eval_interval: 250
+log_interval: 10
+micro_batch_size: 10 # 3 * 10 * 16 = 480, 3 grad accum step on 16 GPUs
+batch_size: 480
+
+max_iters: 100000 # roughly 5 epochs = 45 billion tokens = 100000 iters * 480 batch size
+lr_decay_iters: 100000 # per chinchilla

@@ -72,7 +72,7 @@ if __name__ == "__main__":
         shard_dir = os.path.join(os.path.dirname(__file__), split)
         os.makedirs(shard_dir, exist_ok=True)
         pattern = os.path.join(shard_dir, "shard-%04d.tar.gz")
-        with wds.ShardWriter(pattern, maxcount=30000, maxsize=5e8) as writer:
+        with wds.ShardWriter(pattern, maxsize=1e8) as writer:
             for batch_idx in tqdm(range(total_batches), desc=f"writing {pattern}"):
                 # Batch together samples for faster write
                 batch = dset.shard(

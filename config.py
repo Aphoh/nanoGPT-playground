@@ -41,9 +41,9 @@ class Config:
 
     out_dir: str = "out"
     data_dir: str = "data"
-    eval_interval: int = 500
-    log_interval: int = 1
-    eval_batches: int = 1
+    eval_interval: int = 1000
+    log_interval: int = 10
+    eval_batches: int = 5
     eval_only: bool = False  # if True, script exits right after the first eval
     save_checkpoints: bool = True  # always save a checkpoint after each eval
     init_from: str = "resume"  # 'scratch' or 'resume' or 'gpt2*'

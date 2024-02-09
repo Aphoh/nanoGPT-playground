@@ -2,6 +2,7 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import os
 import torch
+import random
 import webdataset as wds
 from config import Config
 from contextlib import contextmanager
@@ -54,24 +55,28 @@ def _owt_exception_handler(ext):
     print(f"WDS Exception: {ext}, continuing")
 
 
-def get_owt_dataset(split: str, batch_size: int, block_size: int, shuffle: bool):
-    shards = "{0000..0036}" if split == "train" else "0000"
+def get_owt_dataset(
+    split: str, batch_size: int, block_size: int, seed: int, shuffle: bool
+):
+    shards = "{0000..0180}" if split == "train" else "0000"
     base = os.environ.get("OWT_URL", "https://r2.aphoh.us")
     url = f"{base}/openwebtext/{split}/shard-{shards}.tar.gz"
 
+    rng1 = random.Random(seed)
+    rng2 = random.Random(seed + 1)
     pipeline = (
         [wds.SimpleShardList(url), _repeatedly]
         + ([wds.split_by_worker, wds.split_by_node] if split == "train" else [])
-        + ([wds.shuffle(bufsize=10, initial=4)] if shuffle else [])
+        + ([wds.shuffle(bufsize=16, initial=16, rng=rng1)] if shuffle else [])
         + [
             wds.tarfile_to_samples(handler=_owt_exception_handler),
             _PreprocessFn(block_size),
         ]
         + ([wds.split_by_worker, wds.split_by_node] if split == "val" else [])
-        + ([wds.shuffle(bufsize=10000, initial=1000)] if shuffle else [])
+        + ([wds.shuffle(bufsize=20000, initial=20000, rng=rng2)] if shuffle else [])
         + [wds.batched(batch_size, collation_fn=_collation_fn, partial=False)]
     )
-    n_tokens = 9031397883 if split == "train" else 4432413
+    n_tokens = 9_031_397_883 if split == "train" else 4432413
     _, world_size, _, num_workers = wds.utils.pytorch_worker_info()
     n_batches = n_tokens // (block_size + 1) // batch_size // world_size // num_workers
 
@@ -86,9 +91,10 @@ def _get_owt_iter(
     block_size: int,
     shuffle: bool,
     device: torch.device,
+    seed: int,
     num_workers: int = 8,
 ):
-    dataset = get_owt_dataset(split, batch_size, block_size, shuffle)
+    dataset = get_owt_dataset(split, batch_size, block_size, seed, shuffle)
     dataloader = DataLoader(
         dataset,
         batch_size=None,
@@ -142,21 +148,28 @@ def _make_iter(dset: _TextDataset, batch_size: int, device: torch.device):
             yield [a.to(device, non_blocking=True) for a in batch]
 
 
-def get_dataset_iters(cfg: Config, device: torch.device):
+def get_dataset_iters(cfg: Config, device: torch.device, seed: int):
     data_dir = os.path.join(cfg.data_dir, cfg.dataset)
 
     train_iter, val_iter = None, None
     if cfg.dataset == "openwebtext":
         train_iter = _get_owt_iter(
-            "train",
-            cfg.micro_batch_size,
-            cfg.gpt.block_size,
-            True,
-            device,
-            cfg.num_workers,
+            split="train",
+            batch_size=cfg.micro_batch_size,
+            block_size=cfg.gpt.block_size,
+            shuffle=True,
+            device=device,
+            seed=seed,
+            num_workers=cfg.num_workers,
         )
         val_iter = _get_owt_iter(
-            "val", cfg.micro_batch_size, cfg.gpt.block_size, False, device, 1
+            split="val",
+            batch_size=cfg.micro_batch_size,
+            block_size=cfg.gpt.block_size,
+            shuffle=False,
+            device=device,
+            seed=seed,
+            num_workers=1,
         )
         assert (
             cfg.gpt.vocab_size >= 50257

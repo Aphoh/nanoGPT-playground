@@ -199,7 +199,7 @@ def estimate_loss(cfg: Config, rs: RunState, model: GPT, train_iter, val_iter):
         if rs.winfo.ddp:
             dist.reduce(rank_mean, dst=0, op=dist.ReduceOp.SUM, async_op=False)
         out[split] = rank_mean.item() / winfo.world_size
-        rs.print(f"completed {split} eval in {time.time()-t0:.1f}s")
+        rs.print(f"completed {split} eval in {time.time()-t0:.1f}s", flush=True)
     model.train()
     return out
 
@@ -227,7 +227,9 @@ if __name__ == "__main__":
     rs = init_state(cfg, winfo)
     rs.r0_print(f"CONFIG:\n{OmegaConf.to_yaml(cfg)}")
 
-    train_iter, val_iter = get_dataset_iters(cfg, rs.device)
+    train_iter, val_iter = get_dataset_iters(
+        cfg, rs.device, seed=42 + rs.winfo.seed_offset
+    )
 
     model, optimizer = build_model(rs, cfg)
 
@@ -268,6 +270,7 @@ if __name__ == "__main__":
     X, Y = next(train_iter)  # fetch the very first batch
     t0 = time.time()
     running_mfu = -1.0
+    best_loss = float("inf")
     while True:
         # determine and set the learning rate for this iteration
         lr = get_lr(cfg, rs.iter_num) if cfg.decay_lr else cfg.learning_rate
@@ -292,8 +295,16 @@ if __name__ == "__main__":
                     log_dict["lr"] = lr
                     log_dict["mfu"] = running_mfu * 100
                 wandb.log(log_dict, step=rs.iter_num)
-            if cfg.save_checkpoints and winfo.rank == 0 and rs.local_iter_num > 0:
-                save_ckpt(rs, raw_model, optimizer, cfg)
+            if losses["val"] < best_loss:
+                best_loss = losses["val"]
+                if rs.wandb_log:
+                    wandb.log({"best_loss": best_loss}, step=rs.iter_num)
+                if cfg.save_checkpoints and winfo.rank == 0 and rs.local_iter_num > 0:
+                    save_ckpt(rs, raw_model, optimizer, cfg)
+            else:
+                rs.r0_print(
+                    f"val loss did not improve (new:{losses['val']:.4f} vs prev:{best_loss:.4f}), not saving checkpoint"
+                )
 
         # forward backward update, with optional gradient accumulation to simulate larger batch size
         # and using the GradScaler if data type is float16
