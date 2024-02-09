@@ -161,7 +161,10 @@ class MonarchLinear(nn.Module):
         self.reset_parameters()
 
     def forward(self, x):
-        return monarch(x, self.w1, self.w2)
+        x = monarch(x, self.w1, self.w2)
+        if self.bias is not None:
+            x = x + self.bias.to(dtype=x.dtype)  # for amp
+        return x
 
     def reset_parameters(self) -> None:
         for w in [self.w1, self.w2]:
@@ -237,7 +240,7 @@ class BlockLinear(nn.Module):
     def forward(self, x):
         x = self.block_linear(x, self.w1, self.w2, b=self.b)
         if self.bias is not None:
-            x = x + self.bias
+            x = x + self.bias.to(dtype=x.dtype)  # for amp
         return x
 
     def extra_repr(self) -> str:

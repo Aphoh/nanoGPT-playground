@@ -112,7 +112,7 @@ def init_state(cfg: Config, winfo: WorldInfo) -> RunState:
     if winfo.rank == 0:
         os.makedirs(cfg.out_dir, exist_ok=True)
 
-    if winfo.ddp:
+    if winfo.ddp and cfg.device == "cuda":
         device = torch.device(f"cuda:{winfo.local_rank}")
         torch.cuda.set_device(device)
     else:
@@ -249,7 +249,10 @@ if __name__ == "__main__":
     # wrap model into DDP container
     if rs.winfo.ddp:
         rs.print("wrapping model")
-        model = DDP(model, device_ids=[rs.winfo.local_rank])
+        model = DDP(
+            model,
+            device_ids=[rs.winfo.local_rank] if rs.device.type == "cuda" else [],
+        )
         rs.print("model wrapped")
 
     # logging
